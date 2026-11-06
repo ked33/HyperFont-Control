@@ -37,3 +37,24 @@
 - 界面视觉、每个控件的字形与粗细：仍需实际应用验收。
 
 配置契约位于 `config/profile.schema.json`，资源存在性、字体真实轴范围、重复权重和单调映射由后端再校验。示例 JSON 的全零字体 ID 是占位值，不能直接提交。
+
+## 2.5.0 新接口
+
+| 操作 | 输入 | 返回/行为 |
+|---|---|---|
+| list_presets | 无 | Preset[]：id、profile、created、updated |
+| save_preset | profile，可选 id | 新建或更新方案；不修改草稿或提交 |
+| delete_preset | id | 删除方案，保留字体 |
+| stage_preset | id | 使用现有 Stage 校验并提交完整方案 |
+| preview_prepare | id、faceIndex | 提取独立字体面，返回 token、size |
+| preview_chunk | token、offset | 返回 Base64 chunk、下一 offset、总 size；每块最多 48 KiB |
+| preview_release | token | 释放临时预览文件 |
+| export_backup | 无 | Download 中 ZIP 路径及字体/方案数量 |
+| list_backups | 无 | Download 及下一层目录 ZIP 列表 |
+| prepare_restore | path 或上传 token | 完整校验并暂存，返回还原 token、fonts、presets、snapshots |
+| merge_restore | 还原 token | 合并，返回新增 fonts/presets 数量；不切换配置 |
+| cancel_restore | 还原 token | 释放暂存还原 |
+
+`upload_begin` 新增可选 kind（font/backup，缺省 font）；backup 上限 4 GiB，font 保持 256 MiB。备份上传使用现有 chunk/cancel；传完后使用 prepare_restore，不调用 upload_finish。前端串行执行桥接请求。
+
+ZIP v1 只允许 manifest.json 与 fonts/<SHA256>.font。清单 format=hyperfont-control-backup、version=1，包含原字体元数据、方案、draft/active/pending 配置快照。还原重新解析字体元数据并校验全部引用，拒绝重复路径、额外条目、链接和超限内容。方案目录有独立版本及提交修订，Profile schemaVersion 保持 1。

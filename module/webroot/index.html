@@ -27,8 +27,8 @@
         </section>
         <div class="profile-row">
           <label class="name-label">配置名称<input id="profile-name" class="glass-field" maxlength="80" autocomplete="off" value="我的字体组合"></label>
-          <label class="file-button glass-button">导入<input id="profile-file" type="file" accept=".json,application/json"></label>
-          <button id="export-profile" class="glass-button">导出</button>
+          <label class="file-button glass-button" title="仅配置 JSON，不包含字体文件">导入<input id="profile-file" type="file" accept=".json,application/json"></label>
+          <button id="export-profile" class="glass-button" title="仅配置 JSON，不包含字体文件">导出</button>
         </div>
       </div>
       <div id="font-page" hidden>
@@ -78,7 +78,7 @@
         <p class="action-hint">恢复同样在手动重启后生效。卸载会移除本模块的字体库与设置。</p>
       </div>
     </section>
-    <footer>HyperFont <span id="version">2.4.1</span> <span>·</span> 本地运行，无需联网</footer>
+    <footer>HyperFont <span id="version">2.5.0</span> <span>·</span> 本地运行，无需联网</footer>
   </main>
   <div class="save-bar glass">
     <button id="validate" class="glass-button">检查</button><button id="save" class="glass-button">存草稿</button><button id="stage" class="primary">提交更改</button>

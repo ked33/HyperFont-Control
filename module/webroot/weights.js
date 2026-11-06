@@ -40,3 +40,12 @@ export function weightMapProblems(map, weights, axis) {
   }
   return problems;
 }
+
+export function adjustWeight(value, delta, axis) {
+  if (!axis || !Number.isFinite(value)) return value;
+  return Math.max(axis.min, Math.min(axis.max, Math.round((value + delta) * 1000) / 1000));
+}
+export function resetWeightMap(slot, defaults) {
+  slot.weightMap = defaults(slot);
+  delete slot.savedWeightMap;
+}

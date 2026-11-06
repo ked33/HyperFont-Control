@@ -30,7 +30,7 @@ if not notes:
     raise SystemExit(f"CHANGELOG.md has no '## {version}' section")
 (dist / "changelog.md").write_text("\n".join(notes).strip() + "\n", encoding="utf-8")
 
-base = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'gkeyes/HyperFont-Control')}/releases/download/{tag}"
+base = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'ked33/HyperFont-Control')}/releases/download/{tag}"
 update = {"version": version, "versionCode": int(prop["versionCode"]), "zipUrl": f"{base}/{archive.name}", "changelog": f"{base}/changelog.md"}
 (dist / "update.json").write_text(json.dumps(update, indent=2) + "\n", encoding="utf-8")
 print(json.dumps(update))

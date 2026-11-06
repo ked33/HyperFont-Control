@@ -1,4 +1,6 @@
-import { changeWeightMode, shiftWeightMap, weightMapProblems } from './weights.js';
+import { createPreview } from './preview.js';
+import { mountSchemes } from './schemes.js';
+import { changeWeightMode, shiftWeightMap, weightMapProblems, adjustWeight, resetWeightMap } from './weights.js';
 import { faceFamily, faceOptionLabel, fileStem, fontFamily, groupDownloads, groupFonts, naturalCompare, spreadFamily } from './library.js';
 const $ = (q, root = document) => root.querySelector(q);
 const slots = [
@@ -29,7 +31,9 @@ const libraryPageSize = 6;
 
 function text(tag, value, cls) { const e = document.createElement(tag); e.textContent = value; if (cls) e.className = cls; return e; }
 function base64(bytes) { let out = ''; for (let i = 0; i < bytes.length; i += 8192) out += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(out); }
-async function request(payload) {
+let requestQueue = Promise.resolve();
+function request(payload) { const result = requestQueue.then(() => rawRequest(payload)); requestQueue = result.catch(() => {}); return result; }
+async function rawRequest(payload) {
   let reply;
   if (native) {
     // All user values travel inside base64 JSON. No label, path or font name is
@@ -38,7 +42,8 @@ async function request(payload) {
     if (encoded.length >= 120000) throw new Error('单次请求过大');
     const result = await new Promise((resolve, reject) => {
       const callback = `hf_reply_${Date.now()}_${++serial}`;
-      const timer = setTimeout(() => { delete window[callback]; reject(new Error('操作超时，请刷新状态后确认结果，避免重复提交。')); }, 180000);
+      const timeout = ['export_backup','prepare_restore','merge_restore'].includes(payload.op) ? 900000 : 180000;
+      const timer = setTimeout(() => { delete window[callback]; reject(new Error('操作超时，请刷新状态后确认结果，避免重复提交。')); }, timeout);
       window[callback] = (errno, stdout, stderr) => { clearTimeout(timer); delete window[callback]; resolve({ errno, stdout, stderr }); };
       try { window.ksu.exec(`/data/adb/modules/hyperfont_control/bin/hfctl request '${encoded}'`, '{}', callback); }
       catch (e) { clearTimeout(timer); delete window[callback]; reject(e); }
@@ -51,7 +56,9 @@ async function request(payload) {
   if (!reply.ok) throw new Error(reply.error || '操作失败');
   return reply.data;
 }
-function markDirty() { dirty = true; $('#validation').hidden = true; }
+let previewWidget = null;
+function markDirty() { dirty = true; $('#validation').hidden = true; previewWidget?.refresh(); }
+function refreshDisabled() { document.querySelectorAll('[data-unavailable]').forEach(e => e.disabled = busy || !(native || isPreview) || e.dataset.unavailable === 'true'); }
 // Engine errors name fonts by ID; show the file name the user imported instead.
 function readable(message) { return String(message).replace(/字体未导入: ([0-9a-f]{12})/g, (all, id) => { const label = [...knownLabels].find(([k]) => k.startsWith(id))?.[1]; return label ? `字体已不在字体库: ${label}，请重新选择` : all; }); }
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false; toastTimer = setTimeout(() => $('#toast').hidden = true, 5000); }
@@ -59,7 +66,7 @@ function humanMessage(message) { return message.replace(/chinese:/g, '中文：'
 function resultBox(box, message, items = [], error = false) { box.replaceChildren(); box.classList.toggle('error', error); if (items?.length) { const details = document.createElement('details'); details.append(text('summary', humanMessage(message) + ' · 查看说明')); const list = document.createElement('ul'); items.forEach(w => list.append(text('li', humanMessage(w)))); details.append(list); box.append(details); } else box.append(text('p', humanMessage(message))); box.hidden = false; box.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
 function validation(message, warnings = [], error = false) { resultBox($('#validation'), message, warnings, error); }
 function renderImportErrors(message, items) { resultBox($('#import-errors'), message, items, true); $('#import-errors details').open = true; }
-async function run(fn) { if (busy) return; busy = true; document.querySelectorAll('button, input, select').forEach(e => e.disabled = true); try { await fn(); } catch (e) { const message = readable(e.message); toast(message); validation(message, [], true); } finally { busy = false; document.querySelectorAll('button, input, select').forEach(e => e.disabled = !(native || isPreview)); updateDownloadButton(); } }
+async function run(fn) { if (busy) return; busy = true; document.querySelectorAll('button, input, select').forEach(e => e.disabled = true); try { await fn(); } catch (e) { const message = readable(e.message); toast(message); validation(message, [], true); } finally { busy = false; document.querySelectorAll('button, input, select').forEach(e => e.disabled = !(native || isPreview)); updateDownloadButton(); refreshDisabled(); } }
 function confirmAction(title, message) { return new Promise(resolve => { const dialog = $('#confirm-dialog'); $('#dialog-title').textContent = title; $('#dialog-text').textContent = message; const finish = result => { dialog.close(); resolve(result); }; $('#dialog-ok').disabled = false; $('#dialog-cancel').disabled = false; $('#dialog-ok').onclick = () => finish(true); $('#dialog-cancel').onclick = () => finish(false); dialog.oncancel = e => { e.preventDefault(); finish(false); }; dialog.showModal(); }); }
 function faceList(key, mode, italic = false) { return fonts.flatMap(a => a.faces.filter(f => (key === 'chinese' ? f.chinese : f.latin) && f.italic === italic && (mode === 'variable' ? f.axes.length > 0 && f.axes.some(x => x.tag === 'wght') : f.axes.length === 0)).map(f => ({ asset: a, face: f, value: `${a.id}:${f.index}` }))).sort((x, y) => naturalCompare(faceFamily(x.face) || fontFamily(x.asset), faceFamily(y.face) || fontFamily(y.asset)) || naturalCompare(x.asset.label, y.asset.label) || x.face.index - y.face.index); }
 // Picker options grouped by font family, labelled by the file each face came from.
@@ -83,7 +90,7 @@ function slotSummary(s) { if (s.mode === 'system') return '沿用系统字体'; 
 function icon(d) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d); svg.append(path); return svg; }
 function segmentedField(label, options, value, change) { const wrap = text('div', '', 'field'); wrap.append(text('span', label)); const group = text('div', '', 'segmented'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', label); for (const [v, l] of options) { const b = text('button', l); b.type = 'button'; b.setAttribute('aria-pressed', String(v === value)); b.onclick = () => { if (v === value) return; markDirty(); change(v); }; group.append(b); } wrap.append(group); return wrap; }
 function pressed(id, on) { $(id).setAttribute('aria-pressed', String(on)); }
-function showTab(tab) { if (tab === 'import' && (native || isPreview)) setTimeout(() => run(loadDownloads)); if (tab !== document.body.dataset.tab) { $('#validation').hidden = true; $('#import-errors').hidden = true; } document.body.dataset.tab = tab; document.querySelectorAll('.tab-bar button').forEach(b => b.dataset.tab === (tab === 'import' ? 'library' : tab) ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')); document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.id !== tab); renderTitle(); }
+function showTab(tab) { if (tab !== 'settings' && previewWidget) { previewWidget.dispose(); previewWidget = null; } else if (tab === 'settings' && selectedSlot && editorStep === 'weight') renderSlots(); if (tab === 'import' && (native || isPreview)) setTimeout(() => run(loadDownloads)); if (tab !== document.body.dataset.tab) { $('#validation').hidden = true; $('#import-errors').hidden = true; } document.body.dataset.tab = tab; document.querySelectorAll('.tab-bar button').forEach(b => b.dataset.tab === (tab === 'import' ? 'library' : tab) ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')); document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.id !== tab); renderTitle(); }
 function renderTitle() { const [title, subtitle] = pages[document.body.dataset.tab]; $('#page-title').textContent = title; $('#page-subtitle').textContent = subtitle(); }
 // Slider values move in steps of 25 but never leave the axis, so both ends stay reachable.
 function snapWeight(value, axis) { const lo = axis ? axis.min : 0, hi = axis ? axis.max : 1000; return Math.min(hi, Math.max(lo, Math.round(value / 25) * 25)); }
@@ -117,6 +124,7 @@ function dragThumb(slider, change) {
 function weightBar(value, axis) { const lo = axis ? axis.min : 0, hi = axis ? axis.max : 1000; return `${Math.max(0, Math.min(100, (value - lo) / (hi - lo || 1) * 100))}%`; }
 function renderSlots(openKey) {
   if (openKey !== undefined) selectedSlot = openKey;
+  if (previewWidget && (selectedSlot !== previewWidget.key || editorStep !== 'weight')) { previewWidget.dispose(); previewWidget = null; }
   $('#settings-overview').hidden = selectedSlot !== null;
   $('#font-page').hidden = selectedSlot === null;
   $('#settings-footnote').hidden = selectedSlot !== null;
@@ -192,22 +200,29 @@ function renderSlots(openKey) {
         const minus = text('button', '整体减', 'glass-button'); minus.type = 'button'; minus.onclick = () => applyShift(-1);
         const plus = text('button', '整体加', 'glass-button'); plus.type = 'button'; plus.onclick = () => applyShift(1);
         shift.append(text('span', '统一调整'), minus, amount, plus); editor.append(shift);
+        const reset = text('button', '默认', 'glass-button reset-weights'); reset.type = 'button'; reset.dataset.unavailable = String(!wght); reset.onclick = () => { resetWeightMap(s, defaultMap); delete shiftBases[key]; markDirty(); renderSlots(); toast('九档已恢复默认值'); }; editor.append(reset);
         const rows = text('div', '', 'weight-rows'); const checks = []; const problemHint = text('p', '', 'field-help weight-problem');
         const markRows = () => { const problems = weightMapProblems(s.weightMap, weights, wght); for (const [w, row] of checks) { row.classList.toggle('invalid', !!problems[w]); row.title = problems[w]; } const first = weights.find(w => problems[w]); problemHint.textContent = first ? `${first} 档：${problems[first]}` : ''; problemHint.hidden = !first; };
         for (const w of weights) {
-          const row = text('label', '', `weight-row${w === 400 ? ' regular' : ''}`);
+          const row = text('div', '', `weight-row${w === 400 ? ' regular' : ''}`);
           // Slider moves in steps of 25 (arrow keys and TalkBack too): its range is the axis widened
           // to multiples of 25 and every value is clamped back into the axis. The number box takes any exact value.
           const slider = document.createElement('input'); slider.type = 'range'; slider.className = 'weight-slider'; slider.step = 25; slider.setAttribute('aria-label', `${title}请求 ${w} 的轴值滑块`);
           slider.min = wght ? Math.floor(wght.min / 25) * 25 : 0; slider.max = wght ? Math.ceil(wght.max / 25) * 25 : 1000; const track = { min: Number(slider.min), max: Number(slider.max) };
           const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.inputMode = 'decimal'; input.value = s.weightMap[w]; input.setAttribute('aria-label', `${title}请求 ${w} 的实际轴值`); if (wght) { input.min = wght.min; input.max = wght.max; }
+          const decrease = text('button', '−', 'weight-step'), increase = text('button', '+', 'weight-step');
+          decrease.type = increase.type = 'button';
+          decrease.setAttribute('aria-label', `${title} ${w} 档减 50`); increase.setAttribute('aria-label', `${title} ${w} 档加 50`);
+          const updateButtons = () => { const valid = wght && Number.isFinite(s.weightMap[w]); decrease.dataset.unavailable = String(!valid || s.weightMap[w] <= wght.min); increase.dataset.unavailable = String(!valid || s.weightMap[w] >= wght.max); refreshDisabled(); };
           const syncSlider = () => { slider.value = Number.isFinite(s.weightMap[w]) ? s.weightMap[w] : slider.min; slider.style.setProperty('--fill', weightBar(Number(slider.value), track)); };
           syncSlider();
-          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); markDirty(); markRows(); };
-          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); markDirty(); markRows(); };
+          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); updateButtons(); delete shiftBases[key]; markDirty(); markRows(); };
+          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); updateButtons(); delete shiftBases[key]; markDirty(); markRows(); };
+          decrease.onclick = () => setValue(adjustWeight(s.weightMap[w], -50, wght));
+          increase.onclick = () => setValue(adjustWeight(s.weightMap[w], 50, wght)); updateButtons();
           slider.oninput = () => setValue(snapWeight(Number(slider.value), wght));
           const sliderWrap = dragThumb(slider, value => setValue(snapWeight(value, wght)));
-          row.append(text('span', w === 400 ? '400 常规' : String(w)), sliderWrap, input); rows.append(row); checks.push([w, row]);
+          row.append(text('span', w === 400 ? '400 常规' : String(w)), decrease, sliderWrap, increase, input); rows.append(row); checks.push([w, row]);
         }
         markRows(); editor.append(rows, problemHint);
       } else editor.append(text('p', '按应用请求选取字重，例如常规 400 使用文件轴 400。要自行加粗或减细，请选择“自定义九档”。原来的九档设置会保留，切回后恢复；保存并提交后需手动重启。', 'field-help'));
@@ -224,7 +239,11 @@ function renderSlots(openKey) {
       for (const weight of weights) { const row = document.createElement('tr'); row.append(text('td', weight)); for (const style of ['normal', 'italic']) { const cell = document.createElement('td'); const sel = document.createElement('select'); sel.setAttribute('aria-label', `${title} ${weight} ${style === 'normal' ? '正体' : '斜体'}`); sel.append(option('', '未指定')); faceOptions(sel, faceList(key, 'static', style === 'italic')); const ref = s.faces.find(r => r.weight === weight && r.style === style); sel.value = ref ? `${ref.assetId}:${ref.faceIndex}` : ''; const mark = `${style}:${weight}`, check = reviewSteps[key]?.has(mark) && ref; const badge = text('span', `请核对 · ${reviewSteps[key]?.get(mark) || ''}`, 'review-badge'); if (check) cell.classList.add('review'); sel.onchange = () => { s.faces = s.faces.filter(r => r.weight !== weight || r.style !== style); if (sel.value) { const [assetId, index] = sel.value.split(':'); s.faces.push({ assetId, faceIndex: Number(index), weight, style }); } reviewSteps[key]?.delete(mark); cell.classList.remove('review'); badge.remove(); markDirty(); }; cell.append(sel); if (check) cell.append(badge); row.append(cell); } body.append(row); } table.append(body); editor.append(table);
     }
   }
-  root.append(editor);
+  if (editorStep === 'weight') {
+    previewWidget ||= createPreview({request,lookup:faceMeta,key,getSlot:()=>profile.slots[key]});
+    editor.prepend(previewWidget.root); previewWidget.refresh();
+  }
+  root.append(editor); refreshDisabled();
 }
 function fontTags(font) {
   const tags = []; const variable = font.faces.flatMap(f => f.axes.filter(a => a.tag === 'wght'));
@@ -437,6 +456,7 @@ $('#font-file').onchange = event => run(async () => {
   toast(summary);
   if (document.body.dataset.tab === 'import') renderImportErrors(summary, failed); else validation(summary, failed, true);
 });
+const schemes = mountSchemes({request,run,toast,confirmAction,currentProfile,getDirty:()=>dirty,loadStatus,available:native||isPreview,loadProfile:p=>{profile=structuredClone(p);$('#profile-name').value=p.name;modeMemory={};shiftBases={};reviewSteps={};selectedSlot=null;markDirty();renderSlots();},staged:async()=>{dirty=false;selectedSlot=null;await loadStatus();}});
 $('#preview-banner').hidden = !isPreview; renderTitle();
 if (!native && !isPreview) { $('#offline').hidden = false; $('#status-title').textContent = '尚未连接模块'; $('#status-description').textContent = '从模块管理器进入 WebUI 后可读取手机配置。'; renderSlots(); renderLibrary(); document.querySelectorAll('button,input,select').forEach(e => e.disabled = true); document.querySelectorAll('.tab-bar button').forEach(e => e.disabled = false); }
-else run(() => loadStatus());
+else run(async () => { await loadStatus(); await schemes.refresh(); });

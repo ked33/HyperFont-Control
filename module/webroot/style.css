@@ -270,3 +270,21 @@ dialog p{font-size:14px;line-height:1.7;color:var(--muted);margin:12px 0 20px}
 .highlight-pick{animation:pick 1.6s ease-out 2}
 @keyframes pick{0%{box-shadow:0 0 0 0 var(--accent-soft)}40%{box-shadow:0 0 0 6px var(--accent-soft)}100%{box-shadow:0 0 0 0 transparent}}
 body[data-tab=import] .topbar{display:none}
+
+/* Individual steps retain comfortable touch targets on narrow phones. */
+.weight-row{grid-template-columns:52px 36px minmax(40px,1fr) 36px 66px;gap:5px}
+.weight-step{width:36px;height:36px;min-height:36px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:22px;display:grid;place-items:center;padding:0}
+.weight-step:disabled{opacity:.35}
+.reset-weights{align-self:flex-end;min-height:40px;padding:0 18px}
+.font-preview{display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--line);padding-bottom:14px}
+.preview-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.preview-controls strong{margin-right:auto}.preview-controls select{width:auto;min-height:40px}
+.preview-sample{min-width:0}.preview-sample small{color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+.preview-sample p{font-size:24px;line-height:1.65;overflow-wrap:anywhere;margin:6px 0}
+.preview-comparison{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.font-preview summary{min-height:40px;cursor:pointer}
+.scheme-panel{padding:16px;border-radius:24px;display:flex;flex-direction:column;gap:12px}
+.scheme-panel h2{font-size:16px;margin:0}.scheme-actions{display:flex;gap:8px;flex-wrap:wrap}.scheme-actions button,.scheme-actions .file-button{min-height:40px;padding:0 12px}
+.scheme-list{display:flex;flex-direction:column;gap:12px}.scheme-item{border-top:1px solid var(--line);padding-top:10px;overflow-wrap:anywhere}.scheme-item p{color:var(--muted);font-size:12px}
+.scheme-panel progress{width:100%}.scheme-panel input[type=file]{display:none}
+@media(max-width:380px){.weight-row{grid-template-columns:40px minmax(40px,1fr) 40px;gap:4px}.weight-row>span:first-child{grid-column:1/3;grid-row:1}.weight-row>input[type=number]{grid-column:2/4;grid-row:1;width:88px;justify-self:end}.weight-step{width:40px;height:40px}.weight-row>.slider-wrap{grid-column:2;grid-row:2}.weight-row>button{grid-row:2}.weight-shift{grid-template-columns:1fr 60px 1fr}.weight-shift>span{grid-column:1/-1}}

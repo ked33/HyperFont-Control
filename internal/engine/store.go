@@ -161,15 +161,17 @@ type BootRecord struct {
 	ConfigChecks []ConfigObservation `json:"configChecks,omitempty"`
 }
 type Request struct {
-	Op      string   `json:"op"`
-	Profile *Profile `json:"profile,omitempty"`
-	Path    string   `json:"path,omitempty"`
-	Label   string   `json:"label,omitempty"`
-	ID      string   `json:"id,omitempty"`
-	Token   string   `json:"token,omitempty"`
-	Chunk   string   `json:"chunk,omitempty"`
-	Offset  int64    `json:"offset,omitempty"`
-	Size    int64    `json:"size,omitempty"`
+	Op        string   `json:"op"`
+	Profile   *Profile `json:"profile,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	ID        string   `json:"id,omitempty"`
+	Token     string   `json:"token,omitempty"`
+	Chunk     string   `json:"chunk,omitempty"`
+	Offset    int64    `json:"offset,omitempty"`
+	Size      int64    `json:"size,omitempty"`
+	Kind      string   `json:"kind,omitempty"`
+	FaceIndex int      `json:"faceIndex,omitempty"`
 }
 
 func (s *Store) data(parts ...string) string {
@@ -279,6 +281,9 @@ func (s *Store) Locked(fn func() (any, error)) (any, error) {
 		if e = writeAtomic(marker, []byte("hyperfont-control-v1\n"), 0600); e != nil {
 			return nil, e
 		}
+	}
+	if e := s.recoverRestore(); e != nil {
+		return nil, e
 	}
 	return fn()
 }
@@ -691,6 +696,40 @@ func (s *Store) Handle(r Request) (any, error) {
 	switch r.Op {
 	case "status":
 		return s.Status()
+	case "list_presets":
+		return s.Presets()
+	case "save_preset":
+		if r.Profile == nil {
+			return nil, fmt.Errorf("缺少配置")
+		}
+		return s.SavePreset(r.ID, *r.Profile)
+	case "delete_preset":
+		return s.DeletePreset(r.ID)
+	case "stage_preset":
+		p, err := s.preset(r.ID)
+		if err != nil {
+			return nil, err
+		}
+		return s.Stage(p.Profile)
+	case "preview_prepare":
+		return s.preparePreview(r.ID, r.FaceIndex)
+	case "preview_chunk":
+		return s.readPreview(r.Token, r.Offset)
+	case "preview_release":
+		if !tokenPattern.MatchString(r.Token) {
+			return nil, fmt.Errorf("预览令牌无效")
+		}
+		return map[string]bool{"released": true}, removeIfExists(s.data("previews", r.Token))
+	case "export_backup":
+		return s.Backup()
+	case "list_backups":
+		return s.listBackups()
+	case "prepare_restore":
+		return s.prepareRestore(r)
+	case "merge_restore":
+		return s.mergeRestore(r.Token)
+	case "cancel_restore":
+		return map[string]bool{"cancelled": true}, s.cancelRestore(r.Token)
 	case "init":
 		return s.Init()
 	case "refresh_baseline":
@@ -767,10 +806,22 @@ func (s *Store) Handle(r Request) (any, error) {
 		}
 		return s.ImportFile(path, r.Label)
 	case "upload_begin":
-		if r.Size < 12 || r.Size > MaxFontSize {
+		limit := int64(MaxFontSize)
+		if r.Kind == "backup" {
+			limit = MaxBackupSize
+		} else if r.Kind != "" && r.Kind != "font" {
+			return nil, fmt.Errorf("上传类型无效")
+		}
+		if r.Size < 12 || r.Size > limit {
 			return nil, fmt.Errorf("文件大小不支持")
 		}
 		if _, e := s.cleanupUploads(time.Now(), false); e != nil {
+			return nil, e
+		}
+		if _, e := s.privateDir("uploads"); e != nil {
+			return nil, e
+		}
+		if e := requireSpace(s.Root, r.Size+(16<<20)); e != nil {
 			return nil, e
 		}
 		entries, e := s.uploadSessions()
@@ -833,6 +884,9 @@ func (s *Store) Handle(r Request) (any, error) {
 		if st.Size() != begin.Size {
 			return nil, fmt.Errorf("文件尚未传完整")
 		}
+		if begin.Kind == "backup" {
+			return nil, fmt.Errorf("备份请使用预检查及合并还原")
+		}
 		a, e := s.ImportFile(path, begin.Label)
 		if e == nil {
 			_ = os.Remove(path)
@@ -853,6 +907,13 @@ func (s *Store) Handle(r Request) (any, error) {
 			return nil, fmt.Errorf("字体 ID 无效")
 		}
 		refs := []Profile{}
+		presets, err := s.Presets()
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range presets {
+			refs = append(refs, p.Profile)
+		}
 		var draft Profile
 		if readJSON(s.data("draft.json"), &draft) == nil {
 			refs = append(refs, draft)
@@ -869,7 +930,7 @@ func (s *Store) Handle(r Request) (any, error) {
 		for _, p := range refs {
 			b, _ := json.Marshal(p)
 			if strings.Contains(string(b), r.ID) {
-				return nil, fmt.Errorf("字体仍被当前、待生效或草稿配置使用")
+				return nil, fmt.Errorf("字体仍被当前、待生效、草稿或已保存方案使用")
 			}
 		}
 		if e := removeIfExists(s.data("library", r.ID+".font")); e != nil {

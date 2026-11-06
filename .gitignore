@@ -12,3 +12,10 @@ output/
 *.ttc
 *.otc
 *.woff*
+
+node_modules/
+.env
+.env.*
+*.font
+*.zip
+*.exe
