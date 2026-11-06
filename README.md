@@ -1,6 +1,6 @@
 # HyperFont Control
 
-支持可变字体与静态多字重的 Android Root 字体模块，通过手机上的分页 Web 面板修改设置。当前版本：**2.5.0**，新增实时字体预览、多方案切换和完整 ZIP 备份还原。
+支持可变字体与静态多字重的 Android Root 字体模块，通过手机上的分页 Web 面板修改设置。当前版本：**2.5.1**，新增实时字体预览、多方案切换和完整 ZIP 备份还原。
 
 基于 [gkeyes/HyperFont-Control](https://github.com/gkeyes/HyperFont-Control) 开发，保留原 MIT 许可证和作者署名。
 

@@ -74,8 +74,9 @@ export function createPreview({request,lookup,key,getSlot}) {
     return entry.promise;
   }
   let wanted=new Set();
-  async function draw(){
-    const version=++revision,slot=getSlot();if(disposed)return;
+  async function draw(version){
+    if(disposed || version!==revision)return;
+    const slot=getSlot();
     const req=Number(select.value),styleValue=style.value;
     const rows=[{weight:req,target:main}];main.replaceChildren();comparison.replaceChildren();
     if(details.open)for(const weight of weights){const target=el('div',undefined,'preview-sample');comparison.append(target);rows.push({weight,target});}
@@ -98,7 +99,20 @@ export function createPreview({request,lookup,key,getSlot}) {
   }
   // Scheduling coalesces slider events; file loading never mutates the profile.
   let frame;
-  const refresh=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>void draw());};
+  const refresh=()=>{
+    if(disposed)return;
+    // Invalidate pending renders immediately, before the next animation frame.
+    const version=++revision;
+    cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>void draw(version));
+  };
+  const selectWeight=(weight,requestedStyle)=>{
+    if(disposed || !weights.includes(weight))return;
+    select.value=String(weight);
+    // Variable mapping edits preserve the manually selected style; static edits
+    // follow the edited normal/italic column. Never move focus or scroll position.
+    if(requestedStyle==='normal' || requestedStyle==='italic')style.value=requestedStyle;
+    refresh();
+  };
   select.onchange=style.onchange=sample.oninput=details.ontoggle=refresh;
-  return {root,key,refresh,dispose(){disposed=true;revision++;cancelAnimationFrame(frame);for(const e of cache.values())if(e.face)document.fonts.delete(e.face);cache.clear();}};
+  return {root,key,refresh,selectWeight,dispose(){disposed=true;revision++;cancelAnimationFrame(frame);for(const e of cache.values())if(e.face)document.fonts.delete(e.face);cache.clear();}};
 }

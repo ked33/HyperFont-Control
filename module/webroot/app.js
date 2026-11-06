@@ -57,7 +57,11 @@ async function rawRequest(payload) {
   return reply.data;
 }
 let previewWidget = null;
-function markDirty() { dirty = true; $('#validation').hidden = true; previewWidget?.refresh(); }
+function markDirty(previewWeight, previewStyle) {
+  dirty = true; $('#validation').hidden = true;
+  if (previewWeight === undefined) previewWidget?.refresh();
+  else previewWidget?.selectWeight(previewWeight, previewStyle);
+}
 function refreshDisabled() { document.querySelectorAll('[data-unavailable]').forEach(e => e.disabled = busy || !(native || isPreview) || e.dataset.unavailable === 'true'); }
 // Engine errors name fonts by ID; show the file name the user imported instead.
 function readable(message) { return String(message).replace(/字体未导入: ([0-9a-f]{12})/g, (all, id) => { const label = [...knownLabels].find(([k]) => k.startsWith(id))?.[1]; return label ? `字体已不在字体库: ${label}，请重新选择` : all; }); }
@@ -216,8 +220,8 @@ function renderSlots(openKey) {
           const updateButtons = () => { const valid = wght && Number.isFinite(s.weightMap[w]); decrease.dataset.unavailable = String(!valid || s.weightMap[w] <= wght.min); increase.dataset.unavailable = String(!valid || s.weightMap[w] >= wght.max); refreshDisabled(); };
           const syncSlider = () => { slider.value = Number.isFinite(s.weightMap[w]) ? s.weightMap[w] : slider.min; slider.style.setProperty('--fill', weightBar(Number(slider.value), track)); };
           syncSlider();
-          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); updateButtons(); delete shiftBases[key]; markDirty(); markRows(); };
-          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); updateButtons(); delete shiftBases[key]; markDirty(); markRows(); };
+          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); updateButtons(); delete shiftBases[key]; markDirty(w); markRows(); };
+          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); updateButtons(); delete shiftBases[key]; markDirty(w); markRows(); };
           decrease.onclick = () => setValue(adjustWeight(s.weightMap[w], -50, wght));
           increase.onclick = () => setValue(adjustWeight(s.weightMap[w], 50, wght)); updateButtons();
           slider.oninput = () => setValue(snapWeight(Number(slider.value), wght));
@@ -236,7 +240,7 @@ function renderSlots(openKey) {
       editor.append(selectField('缺少字重时', [['nearest', '使用最近的已有字重'], ['reject', '必须提供完整九档正体']], s.missingWeightPolicy, value => s.missingWeightPolicy = value));
       if (reviewSteps[key]?.size) editor.append(text('p', '标“请核对”的档不是按字体自带的字重填的：要么是看文件名里的 Light、Bold 等推断的，要么是几个文件字重相同、按文件名顺序排的。看一眼对不对；改选后标记消失。', 'field-help review-hint'));
       const table = document.createElement('table'); table.className = 'weight-table'; const head = document.createElement('thead'); const tr = document.createElement('tr'); ['请求', '正体文件', '斜体文件'].forEach(t => tr.append(text('th', t))); head.append(tr); table.append(head); const body = document.createElement('tbody');
-      for (const weight of weights) { const row = document.createElement('tr'); row.append(text('td', weight)); for (const style of ['normal', 'italic']) { const cell = document.createElement('td'); const sel = document.createElement('select'); sel.setAttribute('aria-label', `${title} ${weight} ${style === 'normal' ? '正体' : '斜体'}`); sel.append(option('', '未指定')); faceOptions(sel, faceList(key, 'static', style === 'italic')); const ref = s.faces.find(r => r.weight === weight && r.style === style); sel.value = ref ? `${ref.assetId}:${ref.faceIndex}` : ''; const mark = `${style}:${weight}`, check = reviewSteps[key]?.has(mark) && ref; const badge = text('span', `请核对 · ${reviewSteps[key]?.get(mark) || ''}`, 'review-badge'); if (check) cell.classList.add('review'); sel.onchange = () => { s.faces = s.faces.filter(r => r.weight !== weight || r.style !== style); if (sel.value) { const [assetId, index] = sel.value.split(':'); s.faces.push({ assetId, faceIndex: Number(index), weight, style }); } reviewSteps[key]?.delete(mark); cell.classList.remove('review'); badge.remove(); markDirty(); }; cell.append(sel); if (check) cell.append(badge); row.append(cell); } body.append(row); } table.append(body); editor.append(table);
+      for (const weight of weights) { const row = document.createElement('tr'); row.append(text('td', weight)); for (const style of ['normal', 'italic']) { const cell = document.createElement('td'); const sel = document.createElement('select'); sel.setAttribute('aria-label', `${title} ${weight} ${style === 'normal' ? '正体' : '斜体'}`); sel.append(option('', '未指定')); faceOptions(sel, faceList(key, 'static', style === 'italic')); const ref = s.faces.find(r => r.weight === weight && r.style === style); sel.value = ref ? `${ref.assetId}:${ref.faceIndex}` : ''; const mark = `${style}:${weight}`, check = reviewSteps[key]?.has(mark) && ref; const badge = text('span', `请核对 · ${reviewSteps[key]?.get(mark) || ''}`, 'review-badge'); if (check) cell.classList.add('review'); sel.onchange = () => { s.faces = s.faces.filter(r => r.weight !== weight || r.style !== style); if (sel.value) { const [assetId, index] = sel.value.split(':'); s.faces.push({ assetId, faceIndex: Number(index), weight, style }); } reviewSteps[key]?.delete(mark); cell.classList.remove('review'); badge.remove(); markDirty(weight, style); }; cell.append(sel); if (check) cell.append(badge); row.append(cell); } body.append(row); } table.append(body); editor.append(table);
     }
   }
   if (editorStep === 'weight') {
