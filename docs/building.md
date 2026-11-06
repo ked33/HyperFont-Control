@@ -30,3 +30,5 @@ Mac 上如果安装了算力管家，按本机规则先查询额度并通过 `pe
 本分支更新地址为 https://github.com/ked33/HyperFont-Control。推送 main、PR 和手动运行触发 Build module；每次构建提供包含两架构的模块 ZIP、SHA-256 和 build-report.json。打 v版本号标签会在相同校验通过后发布 Release 和在线更新元数据，普通推送不自动发布正式版。第三方 Actions 固定提交，构建任务仅有仓库读取权限，发布任务单独申请 contents:write。
 
 本机检查发现 JDK 21、Node/Python、Android 35 SDK 和 NDK 27.2 可用，但缺少已安装 Go 与可用 Linux 执行环境。临时便携 Go 可交叉编译核心；Linux 单元测试和完整模块打包以 Actions 为准。
+
+Artifacts 采用 upload-artifact v7 的 `archive: false`，分别上传原始 `HyperFont-Control-v版本号.zip`、`.zip.sha256` 和 `build-report.json`。点击模块 ZIP 即可得到可刷入包，无需解压外层归档。文件名随版本号自动变化；提交 SHA 记录在构建报告和 ZIP 内的 SOURCE.txt。旧工作流运行的产物不会自动改名。
