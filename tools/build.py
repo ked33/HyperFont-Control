@@ -11,7 +11,7 @@ import zipfile
 from build_compat import build as build_compat
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 CACHE = Path.home() / ".cache/hyperfont-control-build"
 CACHE.mkdir(parents=True, exist_ok=True)
 JOBS = max(1, min(8, int(os.environ.get("HFC_BUILD_JOBS", "1"))))
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
     with zipfile.ZipFile(archive) as z:
         assert z.testzip() is None
         names = set(z.namelist())
-        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/schemes.js", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
+        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/preview-loader.js", "webroot/schemes.js", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
         assert not any(n.startswith("system/") for n in names)
         assert not any(n.endswith((".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".font")) for n in names)
         assert not any("libc-import" in n or n.endswith("/libc.so") for n in names)

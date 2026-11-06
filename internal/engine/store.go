@@ -26,6 +26,8 @@ type Store struct {
 	Runtime string
 	// Downloads is the phone's Download folder; empty means /sdcard/Download.
 	Downloads string
+	// Fixed module WebUI root, not accepted in requests.
+	WebRoot string
 }
 
 type DownloadFont struct {
@@ -712,6 +714,11 @@ func (s *Store) Handle(r Request) (any, error) {
 		}
 		return s.Stage(p.Profile)
 	case "preview_prepare":
+		if s.WebRoot != "" {
+			if result, err := s.prepareFastPreview(r.ID, r.FaceIndex); err == nil {
+				return result, nil
+			}
+		}
 		return s.preparePreview(r.ID, r.FaceIndex)
 	case "preview_chunk":
 		return s.readPreview(r.Token, r.Offset)
@@ -932,6 +939,9 @@ func (s *Store) Handle(r Request) (any, error) {
 			if strings.Contains(string(b), r.ID) {
 				return nil, fmt.Errorf("字体仍被当前、待生效、草稿或已保存方案使用")
 			}
+		}
+		if e := s.invalidatePreviewCache(r.ID); e != nil {
+			return nil, e
 		}
 		if e := removeIfExists(s.data("library", r.ID+".font")); e != nil {
 			return nil, e

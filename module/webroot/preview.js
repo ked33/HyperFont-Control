@@ -1,3 +1,4 @@
+import { sharedPreviewLoader } from './preview-loader.js';
 const weights = Array.from({length:9}, (_, i) => (i+1)*100);
 
 // Resolve explicitly: CSS matching must not silently choose another static file.
@@ -26,7 +27,7 @@ export function previewFace(slot, requested, style, lookup) {
   return {...ref,meta,style,synthetic,actual:ref.weight};
 }
 
-export function createPreview({request,lookup,key,getSlot}) {
+export function createPreview({request,lookup,key,getSlot,loader=sharedPreviewLoader(request)}) {
   const el=(tag,value,cls)=>{const e=document.createElement(tag);if(value!==undefined)e.textContent=value;if(cls)e.className=cls;return e;};
   const root=el('section',undefined,'font-preview'), controls=el('div',undefined,'preview-controls');
   root.setAttribute('aria-label','字体实时预览');
@@ -38,65 +39,51 @@ export function createPreview({request,lookup,key,getSlot}) {
   sample.value=key==='chinese'?'中文字体 永和九年，岁在癸丑。':'The quick brown fox · Aa Ag 0123456789';
   const main=el('div',undefined,'preview-sample'), details=el('details'), summary=el('summary','展开九档对照'), comparison=el('div',undefined,'preview-comparison');
   details.append(summary,comparison);controls.append(title,select,style);root.append(controls,sample,main,details,el('p','字体文件预览；系统与应用效果请在提交并重启后验收。','field-help'));
-  let disposed=false,revision=0,serial=0,cacheBytes=0;
-  const cache=new Map();
-  const cancelled=()=>disposed;
-  async function load(ref) {
-    const id=`${ref.assetId}:${ref.faceIndex}`;
-    if(cache.has(id))return cache.get(id).promise;
-    const entry={face:null,size:0,promise:null};cache.set(id,entry);
-    entry.promise=(async()=>{
-      let session;
-      try {
-        if(cancelled() || !wanted.has(id))throw new Error('预览已取消');
-        session=await request({op:'preview_prepare',id:ref.assetId,faceIndex:ref.faceIndex});
-        if(cancelled() || !wanted.has(id))throw new Error('预览已取消');
-        if(!Number.isSafeInteger(session.size)||session.size<12||session.size>256*1048576)throw new Error('预览大小无效');
-        // Evict fonts not used by this draw before reserving the next buffer.
-        for(const [k,e] of cache)if(!wanted.has(k)&&e.face){document.fonts.delete(e.face);cacheBytes-=e.size;cache.delete(k);}
-        if(cacheBytes+session.size>384*1048576)throw new Error('预览字体占用过大，请收起九档对照后重试');
-        entry.size=session.size;cacheBytes+=entry.size;
-        const bytes=new Uint8Array(session.size);let offset=0;
-        while(offset<bytes.length){
-          if(cancelled() || !wanted.has(id))throw new Error('预览已取消');
-          const r=await request({op:'preview_chunk',token:session.token,offset});
-          const chunk=Uint8Array.from(atob(r.chunk),c=>c.charCodeAt(0));
-          if(!chunk.length||chunk.length>48*1024||r.offset!==offset+chunk.length||r.size!==bytes.length||r.offset>bytes.length)throw new Error('字体预览传输不完整');
-          bytes.set(chunk,offset);offset=r.offset;
-        }
-        const name=`hfc_preview_${key}_${Date.now()}_${++serial}`;
-        const face=new FontFace(name,bytes.buffer,{weight:'400',style:ref.meta.italic?'italic':'normal'});
-        await face.load();if(cancelled() || !wanted.has(id))throw new Error('预览已取消');
-        document.fonts.add(face);entry.face=face;return name;
-      }catch(e){cache.delete(id);cacheBytes-=entry.size;entry.size=0;throw e;}
-      finally{if(session)try{await request({op:'preview_release',token:session.token});}catch{/* Expired previews are reclaimed by the engine. */}}
-    })();
-    return entry.promise;
+  let disposed=false,revision=0;
+  const owner={};
+  const rowParts=new Map();
+  const parts=target=>{
+    if(!rowParts.has(target)){const label=el('small'),specimen=el('p');specimen.hidden=true;target.append(label,specimen);rowParts.set(target,{label,specimen});}
+    return rowParts.get(target);
+  };
+  const comparisonRows=[];
+  function paint(specimen,label,weight,ref,name){
+    specimen.textContent=sample.value;
+    specimen.style.fontFamily=`"${name}"`;specimen.style.fontWeight='400';specimen.style.fontStyle=ref.meta.italic?'italic':'normal';specimen.style.fontSynthesis='none';
+    if(ref.synthetic){specimen.style.fontStyle='oblique';specimen.style.fontSynthesis='style';}
+    specimen.style.fontVariationSettings=ref.axes?Object.entries(ref.axes).map(([tag,v])=>`"${tag}" ${v}`).join(', '):'normal';
+    label.textContent=`${weight} → ${ref.actual} · ${ref.meta.name}${ref.synthetic?' · 模拟倾斜':''}`;specimen.hidden=false;
   }
   let wanted=new Set();
   async function draw(version){
     if(disposed || version!==revision)return;
     const slot=getSlot();
     const req=Number(select.value),styleValue=style.value;
-    const rows=[{weight:req,target:main}];main.replaceChildren();comparison.replaceChildren();
-    if(details.open)for(const weight of weights){const target=el('div',undefined,'preview-sample');comparison.append(target);rows.push({weight,target});}
+    const rows=[{weight:req,target:main}];
+    if(details.open){
+      if(!comparisonRows.length)for(const weight of weights){const target=el('div',undefined,'preview-sample');comparison.append(target);comparisonRows.push({weight,target});}
+      rows.push(...comparisonRows);
+    }
     const resolved=rows.map(r=>({...r,ref:previewFace(slot,r.weight,styleValue,lookup)}));
     wanted=new Set(resolved.filter(r=>r.ref.assetId).map(r=>`${r.ref.assetId}:${r.ref.faceIndex}`));
-    for(const [id,e] of cache)if(!wanted.has(id)&&e.face){document.fonts.delete(e.face);cacheBytes-=e.size;cache.delete(id);}
+    loader.retain(owner,wanted);
+    const pending=[];
     for(const {weight,target,ref} of resolved){
-      const label=el('small',`${weight} · ${ref.error||'正在加载…'}`),specimen=el('p',sample.value);
-      specimen.hidden=true;target.append(label,specimen);
-      if(ref.error)continue;
-      if(ref.system){specimen.style.fontFamily=key==='serif'?'serif':key==='monospace'?'monospace':'sans-serif';specimen.style.fontWeight=weight;specimen.style.fontStyle=styleValue;label.textContent=`${weight} · 当前 WebView 系统字体`;specimen.hidden=false;continue;}
-      try{
-        const name=await load(ref);if(disposed||version!==revision)return;
-        specimen.style.fontFamily=`"${name}"`;specimen.style.fontWeight='400';specimen.style.fontStyle=ref.meta.italic?'italic':'normal';specimen.style.fontSynthesis='none';
-        if(ref.synthetic){specimen.style.fontStyle='oblique';specimen.style.fontSynthesis='style';}
-        specimen.style.fontVariationSettings=ref.axes?Object.entries(ref.axes).map(([tag,v])=>`"${tag}" ${v}`).join(', '):'normal';
-        label.textContent=`${weight} → ${ref.actual} · ${ref.meta.name}${ref.synthetic?' · 模拟倾斜':''}`;specimen.hidden=false;
-      }catch(e){if(disposed||version!==revision)return;label.textContent=`${weight} · ${e.message}`;}
+      const {label,specimen}=parts(target);
+      if(ref.error){label.textContent=`${weight} · ${ref.error}`;specimen.hidden=true;continue;}
+      if(ref.system){specimen.textContent=sample.value;specimen.style.fontVariationSettings='normal';specimen.style.fontFamily=key==='serif'?'serif':key==='monospace'?'monospace':'sans-serif';specimen.style.fontWeight=weight;specimen.style.fontStyle=styleValue;specimen.style.fontSynthesis='';label.textContent=`${weight} · 当前 WebView 系统字体`;specimen.hidden=false;continue;}
+      const cached=loader.get(`${ref.assetId}:${ref.faceIndex}`);
+      if(cached){paint(specimen,label,weight,ref,cached);continue;}
+      label.textContent=`${weight} · 正在加载…`;specimen.hidden=true;
+      // Paint cached rows immediately. New faces may finish independently; the
+      // revision guard prevents an old request from overwriting a newer choice.
+      pending.push(loader.load(ref,owner).then(name=>{
+        if(!disposed && version===revision)paint(specimen,label,weight,ref,name);
+      }).catch(e=>{if(!disposed && version===revision)label.textContent=`${weight} · ${e.message}`;}));
     }
+    await Promise.all(pending);
   }
+
   // Scheduling coalesces slider events; file loading never mutates the profile.
   let frame;
   const refresh=()=>{
@@ -114,5 +101,5 @@ export function createPreview({request,lookup,key,getSlot}) {
     refresh();
   };
   select.onchange=style.onchange=sample.oninput=details.ontoggle=refresh;
-  return {root,key,refresh,selectWeight,dispose(){disposed=true;revision++;cancelAnimationFrame(frame);for(const e of cache.values())if(e.face)document.fonts.delete(e.face);cache.clear();}};
+  return {root,key,refresh,selectWeight,dispose(){disposed=true;revision++;cancelAnimationFrame(frame);loader.retain(owner,new Set());}};
 }

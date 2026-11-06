@@ -36,6 +36,11 @@ func main() {
 	if _, e := s.Locked(func() (any, error) { return s.Init() }); e != nil {
 		panic(e)
 	}
+	s.WebRoot = filepath.Join(root, "preview-web")
+	if err := os.MkdirAll(s.WebRoot, 0700); err != nil {
+		panic(err)
+	}
+	http.Handle("/preview-cache/", http.FileServer(http.Dir(s.WebRoot)))
 	// Created after Init so a fresh data directory is still empty when the store claims it.
 	if defaultDownloads {
 		_ = os.MkdirAll(s.Downloads, 0o755)

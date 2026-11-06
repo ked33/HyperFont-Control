@@ -20,7 +20,7 @@ func main() {
 		_ = json.NewEncoder(os.Stdout).Encode(response)
 		os.Exit(code)
 	}()
-	s := &engine.Store{Root: "/data/adb/hyperfont-control", RomRoot: "/", Runtime: "/dev/hyperfont-control"}
+	s := &engine.Store{Root: "/data/adb/hyperfont-control", RomRoot: "/", Runtime: "/dev/hyperfont-control", WebRoot: "/data/adb/modules/hyperfont_control/webroot"}
 	args := os.Args[1:]
 	if len(args) == 0 {
 		response["error"] = "需要操作参数"

@@ -58,3 +58,5 @@
 `upload_begin` 新增可选 kind（font/backup，缺省 font）；backup 上限 4 GiB，font 保持 256 MiB。备份上传使用现有 chunk/cancel；传完后使用 prepare_restore，不调用 upload_finish。前端串行执行桥接请求。
 
 ZIP v1 只允许 manifest.json 与 fonts/<SHA256>.font。清单 format=hyperfont-control-backup、version=1，包含原字体元数据、方案、draft/active/pending 配置快照。还原重新解析字体元数据并校验全部引用，拒绝重复路径、额外条目、链接和超限内容。方案目录有独立版本及提交修订，Profile schemaVersion 保持 1。
+
+2.5.2 的 preview_prepare 可额外返回同源相对 url（preview-cache/<字体ID>-<字体面>.ttf）和 cached 标记。前端优先通过现有 WebUI 文件读取通道获取二进制，失败时使用同一 token 的 preview_chunk。调用者仍须 preview_release；单独的公开缓存按限额和过期策略管理，不属于备份或安装包内容。
