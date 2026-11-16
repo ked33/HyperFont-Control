@@ -60,3 +60,16 @@
 ZIP v1 只允许 manifest.json 与 fonts/<SHA256>.font。清单 format=hyperfont-control-backup、version=1，包含原字体元数据、方案、draft/active/pending 配置快照。还原重新解析字体元数据并校验全部引用，拒绝重复路径、额外条目、链接和超限内容。方案目录有独立版本及提交修订，Profile schemaVersion 保持 1。
 
 2.5.2 的 preview_prepare 可额外返回同源相对 url（preview-cache/<字体ID>-<字体面>.ttf）和 cached 标记。前端优先通过现有 WebUI 文件读取通道获取二进制，失败时使用同一 token 的 preview_chunk。调用者仍须 preview_release；单独的公开缓存按限额和过期策略管理，不属于备份或安装包内容。
+
+## 2.6.0 字体覆盖
+
+| 操作 | 输入 | 结果 |
+|---|---|---|
+| font_inventory | 无 | 实际字体表中的字体族、别名、用途、语言、文件和读取错误 |
+| coverage_report | profile, text, language, role（用途或具体字体族） | 临时编译报告及码点预测；不提交配置、不建立新基线 |
+| glyph_probe | text（1–256 字符）, language, role（字体族） | Android 塑形后的 glyph/file/ttcIndex/weight；API 29–30 只返回 hasGlyph |
+| app_font_evidence | package | 目标应用的进程、映射字体与引擎库；不能证明某段文字命中了哪个字体 |
+
+可选 profile.coverage 包含 autoFamilies、engineCompatibility 和 rules。规则按数组顺序排列，支持 role、scripts、languages、families、font；Slot.fallbacks 为最多八个不嵌套的字体设置。Emoji/符号按专用范围过滤；图标仅指定字体族的私用区。Han 规则必须指定语言。
+
+诊断结果 verification 是证据级别，不是成功状态。glyph_probe 在独立进程优先重建 FontManager 当前配置，失败时重建预装配置，fontMapSource 标明来源；它不能代表应用已缓存的字体映射或 Unicorn/Flutter 私有字体集合。

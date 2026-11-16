@@ -174,6 +174,10 @@ type Request struct {
 	Size      int64    `json:"size,omitempty"`
 	Kind      string   `json:"kind,omitempty"`
 	FaceIndex int      `json:"faceIndex,omitempty"`
+	Text      string   `json:"text,omitempty"`
+	Language  string   `json:"language,omitempty"`
+	Role      string   `json:"role,omitempty"`
+	Package   string   `json:"package,omitempty"`
 }
 
 func (s *Store) data(parts ...string) string {
@@ -471,6 +475,23 @@ func (s *Store) Library() ([]Asset, error) {
 		if e = readJSON(s.data("library", f.Name()), &a); e != nil {
 			return nil, e
 		}
+		if len(a.Faces) > 0 && a.Faces[0].GlyphCount == 0 {
+			b, err := osReadFont(s, a.ID)
+			if err != nil {
+				return nil, err
+			}
+			if digest(b) != a.ID {
+				return nil, fmt.Errorf("字体文件校验失败")
+			}
+			faces, err := ParseFont(b)
+			if err != nil {
+				return nil, err
+			}
+			a.Faces = faces
+			if err := writeJSON(s.data("library", f.Name()), a); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
@@ -692,10 +713,21 @@ func (s *Store) Status() (any, error) {
 	marker, _ := os.ReadFile(s.rom("/system/fonts/" + fontCompatMarker))
 	compatReady := visible && compatNeeded && string(marker) == fontCompatSignature
 	compat := map[string]any{"needed": compatNeeded, "preparedThisBoot": compatReady, "requiresZygisk": compatNeeded, "appRenderingVerified": false}
-	return map[string]any{"version": Version, "library": assets, "draft": p, "pending": pending, "active": active, "boot": boot, "visible": visible, "visibilityError": visibilityError, "baseline": base, "fontCompatibility": compat, "capabilities": map[string]any{"variable": true, "static": true, "continuousModern": base.SDK >= 35, "bundledAppFonts": false, "notificationRoleHook": false, "automaticReboot": false, "mountBackend": "ephemeral-bind", "deviceValidation": "runtime-content-hashes"}}, nil
+	return map[string]any{"version": Version, "library": assets, "draft": p, "pending": pending, "active": active, "boot": boot, "visible": visible, "visibilityError": visibilityError, "baseline": base, "fontCompatibility": compat, "coverageCapabilities": map[string]any{"scripts": scriptList(), "roles": []string{"sans", "serif", "monospace", "casual", "cursive", "decorative", "emoji", "symbols", "icons"}, "fallbackChainLimit": 8, "ruleLimit": 32, "unicodeVersion": "16.0.0", "engineCompatibility": "configuration", "glyphProbe": true, "appFontEvidence": true, "privateFontHook": false}, "capabilities": map[string]any{"variable": true, "static": true, "continuousModern": base.SDK >= 35, "bundledAppFonts": false, "notificationRoleHook": false, "automaticReboot": false, "mountBackend": "ephemeral-bind", "deviceValidation": "runtime-content-hashes"}}, nil
 }
 func (s *Store) Handle(r Request) (any, error) {
 	switch r.Op {
+	case "font_inventory":
+		return s.FontInventory()
+	case "coverage_report":
+		if r.Profile == nil {
+			return nil, fmt.Errorf("缺少配置")
+		}
+		return s.CoverageReport(*r.Profile, r.Text, r.Language, r.Role)
+	case "app_font_evidence":
+		return s.AppFontEvidence(r.Package)
+	case "glyph_probe":
+		return s.GlyphProbe(r.Text, r.Language, r.Role)
 	case "status":
 		return s.Status()
 	case "list_presets":

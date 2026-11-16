@@ -36,10 +36,11 @@ export function mountSchemes({request,run,toast,confirmAction,currentProfile,get
     for(const p of items){
       const item=el('article',undefined,'scheme-item'),row=el('div',undefined,'scheme-actions');item.append(el('strong',p.profile.name));
       const modes={system:'系统',variable:'可变',static:'静态'},names={chinese:'中文',latinSans:'无衬线',serif:'衬线',monospace:'等宽'};
-      item.append(el('p',Object.entries(p.profile.slots).map(([k,v])=>`${names[k]}：${modes[v.mode]}`).join(' · ')));
+      item.append(el('p',Object.entries(p.profile.slots).map(([k,v])=>`${names[k]}：${modes[v.mode]}${v.fallbacks?.length?`＋${v.fallbacks.length} 套补字`:''}`).join(' · ')));
+      if(p.profile.coverage)item.append(el('p',`高级规则 ${p.profile.coverage.rules?.length||0} 条 · 字体族扩展 ${p.profile.coverage.autoFamilies?'开':'关'} · 引擎兼容 ${p.profile.coverage.engineCompatibility?'开':'关'}`));
       row.append(button('一键切换',async()=>{if(!await beforeReplace())return;await request({op:'stage_preset',id:p.id});await staged();toast('方案已提交，请手动重启生效');},true));
       row.append(button('载入编辑',async()=>{if(await beforeReplace()){loadProfile(p.profile);toast('方案已载入编辑，尚未提交');}}));
-      row.append(button('用当前设置更新',async()=>{if(await confirmAction('更新方案',`用当前四类字体设置覆盖“${p.profile.name}”？`)){await request({op:'save_preset',id:p.id,profile:{...currentProfile(),name:p.profile.name}});await refresh();toast('方案已更新');}}));
+      row.append(button('用当前设置更新',async()=>{if(await confirmAction('更新方案',`用当前字体及覆盖设置覆盖“${p.profile.name}”？`)){await request({op:'save_preset',id:p.id,profile:{...currentProfile(),name:p.profile.name}});await refresh();toast('方案已更新');}}));
       row.append(button('重命名',()=>rename(p)),button('删除',async()=>{if(await confirmAction('删除方案',`删除“${p.profile.name}”？字体文件及当前生效配置会保留。`)){await request({op:'delete_preset',id:p.id});await refresh();}}));
       item.append(row);list.append(item);
     }

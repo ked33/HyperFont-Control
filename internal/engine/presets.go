@@ -119,14 +119,8 @@ func (s *Store) DeletePreset(id string) (any, error) {
 
 func profileAssets(p Profile) map[string]bool {
 	ids := map[string]bool{}
-	for _, slot := range p.Slots {
-		if slot.AssetID != "" {
-			ids[slot.AssetID] = true
-		}
-		if slot.ItalicAssetID != "" {
-			ids[slot.ItalicAssetID] = true
-		}
-		for _, face := range slot.Faces {
+	for _, slot := range profileSlots(p) {
+		for _, face := range slotReferences(slot) {
 			ids[face.AssetID] = true
 		}
 	}

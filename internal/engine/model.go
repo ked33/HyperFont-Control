@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const Version = "2.5.2"
+const Version = "2.6.0"
 const MaxFontSize = 256 << 20
 
 var assetPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -24,18 +24,27 @@ type Axis struct {
 	Max     float64 `json:"max"`
 }
 type Face struct {
-	Index      int    `json:"index"`
-	Name       string `json:"name"`
-	PostScript string `json:"postScript"`
-	Weight     int    `json:"weight"`
-	Italic     bool   `json:"italic"`
-	Units      int    `json:"unitsPerEm"`
-	Ascender   int    `json:"ascender"`
-	Descender  int    `json:"descender"`
-	LineGap    int    `json:"lineGap"`
-	Axes       []Axis `json:"axes"`
-	Chinese    bool   `json:"chinese"`
-	Latin      bool   `json:"latin"`
+	Index              int      `json:"index"`
+	Name               string   `json:"name"`
+	PostScript         string   `json:"postScript"`
+	Weight             int      `json:"weight"`
+	Italic             bool     `json:"italic"`
+	Units              int      `json:"unitsPerEm"`
+	Ascender           int      `json:"ascender"`
+	Descender          int      `json:"descender"`
+	LineGap            int      `json:"lineGap"`
+	Axes               []Axis   `json:"axes"`
+	Chinese            bool     `json:"chinese"`
+	Latin              bool     `json:"latin"`
+	Scripts            []string `json:"scripts,omitempty"`
+	GlyphCount         int      `json:"glyphCount,omitempty"`
+	Monospace          bool     `json:"monospace,omitempty"`
+	ColorFormats       []string `json:"colorFormats,omitempty"`
+	Shaping            bool     `json:"shaping,omitempty"`
+	VariationSequences bool     `json:"variationSequences,omitempty"`
+	Symbols            bool     `json:"symbols,omitempty"`
+	PrivateUse         bool     `json:"privateUse,omitempty"`
+	Emoji              bool     `json:"emoji,omitempty"`
 }
 type Asset struct {
 	ID    string `json:"id"`
@@ -61,16 +70,18 @@ type Slot struct {
 	SavedWeightMap      map[string]float64 `json:"savedWeightMap,omitempty"`
 	Faces               []FaceRef          `json:"faces,omitempty"`
 	MissingWeightPolicy string             `json:"missingWeightPolicy,omitempty"`
+	Fallbacks           []Slot             `json:"fallbacks,omitempty"`
 }
 type Profile struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Name          string          `json:"name"`
 	Activation    string          `json:"activation"`
 	Slots         map[string]Slot `json:"slots"`
+	Coverage      *CoverageConfig `json:"coverage,omitempty"`
 }
 
 func DefaultProfile() Profile {
-	p := Profile{1, "系统字体", "manual-reboot", map[string]Slot{}}
+	p := Profile{SchemaVersion: 1, Name: "系统字体", Activation: "manual-reboot", Slots: map[string]Slot{}}
 	for _, s := range SlotNames {
 		p.Slots[s] = Slot{Mode: "system"}
 	}
@@ -80,6 +91,13 @@ func (p Profile) IsSystem() bool {
 	for _, s := range p.Slots {
 		if s.Mode != "system" {
 			return false
+		}
+	}
+	if p.Coverage != nil {
+		for _, rule := range p.Coverage.Rules {
+			if rule.Font.Mode != "system" {
+				return false
+			}
 		}
 	}
 	return true
@@ -99,6 +117,23 @@ func (s *Store) lookup(id string, idx int) (Asset, Face, error) {
 	if idx < 0 || idx >= len(a.Faces) {
 		return a, Face{}, fmt.Errorf("字体集合索引超出范围")
 	}
+	if a.Faces[idx].GlyphCount == 0 {
+		b, err := osReadFont(s, id)
+		if err != nil {
+			return a, Face{}, err
+		}
+		if digest(b) != id {
+			return a, Face{}, fmt.Errorf("字体文件校验失败")
+		}
+		faces, err := ParseFont(b)
+		if err != nil || idx >= len(faces) {
+			if err == nil {
+				err = fmt.Errorf("字体集合索引超出范围")
+			}
+			return a, Face{}, err
+		}
+		a.Faces = faces
+	}
 	return a, a.Faces[idx], nil
 }
 func (s *Store) Validate(p Profile) ([]string, error) {
@@ -114,18 +149,66 @@ func (s *Store) Validate(p Profile) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("缺少分类 %s", key)
 		}
+		w, err := s.validateSlot(v, key, coreScope(key), true)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, w...)
+	}
+	if p.Coverage != nil {
+		w, err := s.validateCoverage(*p.Coverage)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, w...)
+	}
+	if !p.IsSystem() {
+		warnings = append(warnings, "应用私有字体、图片文字和游戏图集需要单独适配；引擎配置兼容不代表每个应用已验证。", "保留字体原始行距；导入不同字体可能改变界面排版，请在通知与设置中验收。")
+	}
+	sort.Strings(warnings)
+	return warnings, nil
+}
+
+func (s *Store) validateSlot(v Slot, key, scope string, allowFallbacks bool) ([]string, error) {
+	var warnings []string
+	if len(v.Fallbacks) > 8 || !allowFallbacks && len(v.Fallbacks) != 0 {
+		return nil, fmt.Errorf("%s: 补字链最多八套且不能嵌套", key)
+	}
+	for i, fallback := range v.Fallbacks {
+		if fallback.Mode == "system" {
+			return nil, fmt.Errorf("%s: 原生系统补字已自动保留", key)
+		}
+		w, err := s.validateSlot(fallback, fmt.Sprintf("%s 补字 %d", key, i+1), scope, false)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, w...)
+	}
+	{
 		if v.Mode == "system" {
-			if v.AssetID != "" || v.ItalicAssetID != "" || v.FamilyMode != "" || len(v.Axes)+len(v.WeightMap)+len(v.SavedWeightMap)+len(v.Faces) > 0 || v.MissingWeightPolicy != "" || v.FaceIndex != 0 || v.ItalicFaceIndex != 0 {
+			if v.AssetID != "" || v.ItalicAssetID != "" || v.FamilyMode != "" || len(v.Axes)+len(v.WeightMap)+len(v.SavedWeightMap)+len(v.Faces)+len(v.Fallbacks) > 0 || v.MissingWeightPolicy != "" || v.FaceIndex != 0 || v.ItalicFaceIndex != 0 {
 				return nil, fmt.Errorf("%s: 系统模式不接受字体参数", key)
 			}
-			continue
+			return warnings, nil
 		}
 		checkCoverage := func(f Face) error {
-			if key == "chinese" && !f.Chinese {
+			if scope == "cjk" && allowFallbacks && !f.Chinese {
 				return fmt.Errorf("%s: 字体缺少基本汉字", key)
 			}
-			if key != "chinese" && !f.Latin {
+			if scope == "latin" && allowFallbacks && !f.Latin {
 				return fmt.Errorf("%s: 字体缺少基本英文字母", key)
+			}
+			if scope != "cjk" && scope != "latin" || !allowFallbacks {
+				checkScope := scope
+				if scope == "cjk" {
+					checkScope = "script:Hani"
+				}
+				if scope == "latin" {
+					checkScope = "script:Latn"
+				}
+				if err := s.checkFaceScope(f, v, checkScope); err != nil {
+					return fmt.Errorf("%s: %w", key, err)
+				}
 			}
 			return nil
 		}
@@ -233,7 +316,11 @@ func (s *Store) Validate(p Profile) ([]string, error) {
 				return nil, fmt.Errorf("静态模式不接受可变参数")
 			}
 			if len(v.Faces) == 0 {
-				return nil, fmt.Errorf("“%s”选了静态多字重但还没有字体文件，请在“① 选择字体”选一个字体家族", slotTitles[key])
+				title := slotTitles[key]
+				if title == "" {
+					title = key
+				}
+				return nil, fmt.Errorf("“%s”选了静态多字重但还没有字体文件，请在“① 选择字体”选一个字体家族", title)
 			}
 			if len(v.Faces) > 18 || (v.MissingWeightPolicy != "reject" && v.MissingWeightPolicy != "nearest") {
 				return nil, fmt.Errorf("静态字重配置无效")
@@ -253,7 +340,7 @@ func (s *Store) Validate(p Profile) ([]string, error) {
 				if e != nil {
 					return nil, e
 				}
-				if len(f.Axes) > 0 {
+				if hasWeightAxis(f) {
 					return nil, fmt.Errorf("请用可变模式配置带轴字体")
 				}
 				if e = checkCoverage(f); e != nil {
@@ -279,10 +366,6 @@ func (s *Store) Validate(p Profile) ([]string, error) {
 			return nil, fmt.Errorf("不支持的字体模式 %q", v.Mode)
 		}
 	}
-	if !p.IsSystem() {
-		warnings = append(warnings, "应用主动使用的私有字体和网页下载字体不由系统字体表控制；小米默认字重适配需启用 Zygisk 并重启。", "保留字体原始行距；导入不同字体可能改变界面排版，请在通知与设置中验收。")
-	}
-	sort.Strings(warnings)
 	return warnings, nil
 }
 func strictJSON(b []byte, dst any) error {

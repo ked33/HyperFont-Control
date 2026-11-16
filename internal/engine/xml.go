@@ -20,6 +20,7 @@ type node struct {
 	Text     string
 	Children []*node
 	Comment  bool
+	role     string // Original purpose survives generated filenames; never serialized.
 }
 
 func parseXML(b []byte) (*node, error) {
@@ -245,6 +246,8 @@ func (c *compiler) makeFonts(s Slot, scope string, modern bool) ([]*node, error)
 	filter := "latin"
 	if scope == "chinese" {
 		filter = "cjk"
+	} else if validScope(scope) {
+		filter = scope
 	}
 	font := func(id string, index, weight int, style string, axes map[string]float64, continuous bool) (*node, error) {
 		name, e := c.fontFile(id, index, filter, false)
@@ -334,6 +337,8 @@ func (c *compiler) makeFonts(s Slot, scope string, modern bool) ([]*node, error)
 }
 func namedSlot(name string) string {
 	switch {
+	case name == "serif-monospace" || name == "sans-serif-monospace":
+		return "monospace"
 	case name == "serif" || strings.HasPrefix(name, "serif-"):
 		return "serif"
 	case name == "monospace":
@@ -434,6 +439,11 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 	if set == nil {
 		return nil, 0, fmt.Errorf("不支持的字体配置根节点 %s", path)
 	}
+	restoreNames := inheritFamilyNames(set)
+	defer restoreNames()
+	for _, family := range namedFamilies(set) {
+		family.role = familyRole(family.attr("name"), family)
+	}
 	modern := strings.Contains(path, "fallback") || strings.HasSuffix(path, "misans_variable_fonts.xml")
 	changes := 0
 	if set.Name.Local == "fonts-modification" {
@@ -455,7 +465,7 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 			}
 			set.Children = kept
 		}
-		for _, family := range set.Children {
+		for _, family := range namedFamilies(set) {
 			if family.Name.Local != "family" {
 				continue
 			}
@@ -506,7 +516,7 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 		// Named families must not keep a CJK-capable primary that masks the new Han
 		// fallback. Filter only its cmap; keep stock outlines, metrics and axes.
 		extras := []*node{}
-		for _, family := range set.Children {
+		for _, family := range namedFamilies(set) {
 			if family.Name.Local != "family" {
 				continue
 			}
@@ -636,7 +646,7 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 		children = append(children, set.Children[at:]...)
 		set.Children = children
 		if nativeChinese != nil {
-			for _, family := range set.Children {
+			for _, family := range namedFamilies(set) {
 				if family.attr("name") == nativeChinese.attr("name") {
 					return nil, 0, fmt.Errorf("系统字体表占用了模块内部字体名称: %s", nativeChinese.attr("name"))
 				}
@@ -644,7 +654,7 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 			// Preserve the first/default family and explicit decorative names.
 			at := len(set.Children)
 			for i, family := range set.Children {
-				if family.Name.Local == "family" {
+				if family.Name.Local == "family" || family.Name.Local == "family-list" {
 					at = i + 1
 					break
 				}
@@ -678,7 +688,7 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 			}
 		}
 		if p.Slots["latinSans"].Mode != "system" {
-			for _, family := range set.Children {
+			for _, family := range namedFamilies(set) {
 				if family.Name.Local != "family" || family.attr("name") != "" {
 					continue
 				}
@@ -701,9 +711,15 @@ func (c *compiler) compileXML(path string, raw []byte, p Profile) ([]byte, int, 
 			}
 		}
 	}
+	extra, err := c.coverageLayers(set, p, modern)
+	if err != nil {
+		return nil, 0, err
+	}
+	changes += extra
 	if changes == 0 {
 		return raw, 0, nil
 	}
+	restoreNames()
 	if err = validateAndroidFontXML(root); err != nil {
 		return nil, 0, err
 	}

@@ -11,7 +11,7 @@ import zipfile
 from build_compat import build as build_compat
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.5.2"
+VERSION = "2.6.0"
 CACHE = Path.home() / ".cache/hyperfont-control-build"
 CACHE.mkdir(parents=True, exist_ok=True)
 JOBS = max(1, min(8, int(os.environ.get("HFC_BUILD_JOBS", "1"))))
@@ -59,7 +59,19 @@ with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
         item.external_attr = 0o100644 << 16
         z.writestr(item, (dex / "classes.dex").read_bytes())
     shutil.copy2(stage / "bin/verify-fonts.jar", CACHE / "verify-fonts.jar")
+    probe_classes = Path(temporary) / "probe-classes"
+    probe_dex = Path(temporary) / "probe-dex"
+    probe_classes.mkdir(); probe_dex.mkdir()
+    run([JAVA / "bin/javac", "-source", "8", "-target", "8", "-classpath", android, "-d", probe_classes, ROOT / "android/FontRouteProbe.java"])
+    run([SDK / "build-tools" / BUILD_TOOLS / "d8", "--min-api", "29", "--lib", android, "--output", probe_dex, probe_classes / "local/hyperfont/FontRouteProbe.class"])
+    with zipfile.ZipFile(stage / "bin/font-route-probe.jar", "w", zipfile.ZIP_DEFLATED) as z:
+        item = zipfile.ZipInfo("classes.dex", (2026, 10, 24, 0, 0, 0))
+        item.compress_type = zipfile.ZIP_DEFLATED
+        item.external_attr = 0o100644 << 16
+        z.writestr(item, (probe_dex / "classes.dex").read_bytes())
     shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
+    shutil.copy2(ROOT / "internal/engine/UNICODE-LICENSE.txt", stage / "UNICODE-LICENSE.txt")
+    shutil.copy2(ROOT / "internal/engine/unicode-sources.json", stage / "unicode-sources.json")
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True)
     source_commit = revision.stdout.strip() if revision.returncode == 0 else "unversioned"
     (stage / "SOURCE.txt").write_text("HyperFont Control " + VERSION + "\nSource: https://github.com/ked33/HyperFont-Control\nCommit: " + source_commit + "\nOriginal font compatibility adapter; no MFGA fonts or binaries bundled.\nThird-party API header sources and licenses: third_party/.\nWebUI bridge protocol: https://kernelsu.org/guide/module-webui.html\n", encoding="utf-8")
@@ -84,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
     with zipfile.ZipFile(archive) as z:
         assert z.testzip() is None
         names = set(z.namelist())
-        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/preview-loader.js", "webroot/schemes.js", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
+        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/preview-loader.js", "webroot/schemes.js", "webroot/coverage.js", "bin/font-route-probe.jar", "UNICODE-LICENSE.txt", "unicode-sources.json", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
         assert not any(n.startswith("system/") for n in names)
         assert not any(n.endswith((".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".font")) for n in names)
         assert not any("libc-import" in n or n.endswith("/libc.so") for n in names)

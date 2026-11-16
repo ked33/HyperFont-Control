@@ -1,4 +1,5 @@
 import { createPreview } from './preview.js';
+import { editorEntries, findRule, getSlot, putSlot, faceEligible, mountCoverage, fallbackEditor } from './coverage.js';
 import { mountSchemes } from './schemes.js';
 import { changeWeightMode, shiftWeightMap, weightMapProblems, adjustWeight, resetWeightMap } from './weights.js';
 import { faceFamily, faceOptionLabel, fileStem, fontFamily, groupDownloads, groupFonts, naturalCompare, spreadFamily } from './library.js';
@@ -22,6 +23,7 @@ const native = typeof window.ksu?.exec === 'function';
 let serial = 0, busy = false, status, dirty = false, toastTimer;
 let profile = { schemaVersion: 1, name: '我的字体组合', activation: 'manual-reboot', slots: Object.fromEntries(slots.map(([key]) => [key, { mode: 'system' }])) };
 let fonts = [];
+let fallbackIndex = null;
 let selectedSlot = null, editorStep = 'font', libraryPage = 1, shiftAmount = 50, shiftBases = {}, modeMemory = {}, reviewSteps = {};
 const openGroups = new Set(), downloadChecked = new Set();
 let downloadFiles = [], downloadError = '';
@@ -72,7 +74,7 @@ function validation(message, warnings = [], error = false) { resultBox($('#valid
 function renderImportErrors(message, items) { resultBox($('#import-errors'), message, items, true); $('#import-errors details').open = true; }
 async function run(fn) { if (busy) return; busy = true; document.querySelectorAll('button, input, select').forEach(e => e.disabled = true); try { await fn(); } catch (e) { const message = readable(e.message); toast(message); validation(message, [], true); } finally { busy = false; document.querySelectorAll('button, input, select').forEach(e => e.disabled = !(native || isPreview)); updateDownloadButton(); refreshDisabled(); } }
 function confirmAction(title, message) { return new Promise(resolve => { const dialog = $('#confirm-dialog'); $('#dialog-title').textContent = title; $('#dialog-text').textContent = message; const finish = result => { dialog.close(); resolve(result); }; $('#dialog-ok').disabled = false; $('#dialog-cancel').disabled = false; $('#dialog-ok').onclick = () => finish(true); $('#dialog-cancel').onclick = () => finish(false); dialog.oncancel = e => { e.preventDefault(); finish(false); }; dialog.showModal(); }); }
-function faceList(key, mode, italic = false) { return fonts.flatMap(a => a.faces.filter(f => (key === 'chinese' ? f.chinese : f.latin) && f.italic === italic && (mode === 'variable' ? f.axes.length > 0 && f.axes.some(x => x.tag === 'wght') : f.axes.length === 0)).map(f => ({ asset: a, face: f, value: `${a.id}:${f.index}` }))).sort((x, y) => naturalCompare(faceFamily(x.face) || fontFamily(x.asset), faceFamily(y.face) || fontFamily(y.asset)) || naturalCompare(x.asset.label, y.asset.label) || x.face.index - y.face.index); }
+function faceList(key, mode, italic = false) { const rule = findRule(profile, key) || (fallbackIndex!==null?{role:'sans',scripts:[key==='chinese'?'Hani':'Latn']}:null); return fonts.flatMap(a => a.faces.filter(f => (rule ? faceEligible(f, rule) : key === 'chinese' ? f.chinese : f.latin) && f.italic === italic && (mode === 'variable' ? f.axes.length > 0 && f.axes.some(x => x.tag === 'wght') : !f.axes.some(x => x.tag === 'wght'))).map(f => ({ asset: a, face: f, value: `${a.id}:${f.index}` }))).sort((x, y) => naturalCompare(faceFamily(x.face) || fontFamily(x.asset), faceFamily(y.face) || fontFamily(y.asset)) || naturalCompare(x.asset.label, y.asset.label) || x.face.index - y.face.index); }
 // Picker options grouped by font family, labelled by the file each face came from.
 function faceOptions(select, list) { const groups = new Map(); for (const o of list) { const family = faceFamily(o.face) || fontFamily(o.asset); if (!groups.has(family)) groups.set(family, []); groups.get(family).push(o); } for (const [family, items] of groups) { const parent = items.length > 1 ? Object.assign(document.createElement('optgroup'), { label: `${family} · ${items.length}` }) : select; const sameWeight = new Set(items.map(o => o.face.weight)).size === 1 && items.length > 1; items.forEach(o => parent.append(option(o.value, faceOptionLabel(o.asset, o.face, !sameWeight)))); if (parent !== select) select.append(parent); } }
 function faceMeta(id, index = 0) { return fonts.find(f => f.id === id)?.faces.find(f => f.index === index); }
@@ -81,7 +83,8 @@ function selectField(label, options, value, change, faces = []) { const wrap = t
 // Switching font type brings back what this slot last had in that type: this session's edits first, then the pending or active configuration.
 function rememberedSlot(key, mode) {
   if (mode === 'system') return null;
-  const found = [modeMemory[key]?.[mode], status?.pending?.profile?.slots?.[key], status?.active?.profile?.slots?.[key]].find(x => x?.mode === mode);
+  const saved = p => { if (!p) return null; const slot=getSlot(p,key); return fallbackIndex === null ? slot : slot?.fallbacks?.[fallbackIndex]; };
+  const found = [modeMemory[editorMemoryKey(key)]?.[mode], saved(status?.pending?.profile), saved(status?.active?.profile)].find(x => x?.mode === mode);
   if (!found) return null;
   const slot = structuredClone(found); const has = (id, index) => !!faceMeta(id, index);
   if (mode === 'variable') { if (!has(slot.assetId, slot.faceIndex)) { slot.assetId = ''; slot.faceIndex = 0; } if (slot.italicAssetId && !has(slot.italicAssetId, slot.italicFaceIndex)) { delete slot.italicAssetId; delete slot.italicFaceIndex; } }
@@ -126,8 +129,13 @@ function dragThumb(slider, change) {
   wrap.append(slider); return wrap;
 }
 function weightBar(value, axis) { const lo = axis ? axis.min : 0, hi = axis ? axis.max : 1000; return `${Math.max(0, Math.min(100, (value - lo) / (hi - lo || 1) * 100))}%`; }
+function editorMemoryKey(key) { return `${key}:${fallbackIndex ?? 'primary'}`; }
+function activeSlot(key) { const slot=getSlot(profile,key); return fallbackIndex === null ? slot : slot.fallbacks?.[fallbackIndex]; }
+function setActiveSlot(key,slot) { if(fallbackIndex === null)putSlot(profile,key,slot);else getSlot(profile,key).fallbacks[fallbackIndex]=slot; }
 function renderSlots(openKey) {
-  if (openKey !== undefined) selectedSlot = openKey;
+  if (openKey !== undefined) { selectedSlot = openKey; fallbackIndex = null; }
+  const entries = editorEntries(profile, slots);
+  if (selectedSlot !== null && !entries.some(([key])=>key===selectedSlot)) { selectedSlot=null; fallbackIndex=null; }
   if (previewWidget && (selectedSlot !== previewWidget.key || editorStep !== 'weight')) { previewWidget.dispose(); previewWidget = null; }
   $('#settings-overview').hidden = selectedSlot !== null;
   $('#font-page').hidden = selectedSlot === null;
@@ -135,8 +143,8 @@ function renderSlots(openKey) {
   document.body.classList.toggle('editing-font', selectedSlot !== null);
   const root = $('#slots'); root.replaceChildren();
   if (selectedSlot === null) {
-    for (const [key, title, symbol, , glyphClass] of slots) {
-      const s = profile.slots[key];
+    for (const [key, title, symbol, , glyphClass] of entries) {
+      const s = getSlot(profile,key);
       const tile = text('button', '', `slot-tile glass${s.mode === 'system' ? ' system' : ''}`); tile.type = 'button'; tile.dataset.slot = key;
       tile.append(text('span', symbol, `slot-glyph ${glyphClass}`), text('strong', title), text('small', slotSummary(s)));
       tile.onclick = () => { editorStep = 'font'; renderSlots(key); window.scrollTo(0, 0); };
@@ -144,18 +152,20 @@ function renderSlots(openKey) {
     }
     return;
   }
-  const index = slots.findIndex(([key]) => key === selectedSlot);
-  const [key, title, , description] = slots[index];
-  const s = profile.slots[key];
-  $('#font-page-title').textContent = title;
-  $('#font-page-position').textContent = `${index + 1} / ${slots.length} 个分类 · ${description}`;
-  $('#slot-previous').classList.toggle('off', index === 0); $('#slot-next').classList.toggle('off', index === slots.length - 1);
+  const index = entries.findIndex(([key]) => key === selectedSlot);
+  const [key, title, , description] = entries[index];
+  if (fallbackIndex !== null && !getSlot(profile,key)?.fallbacks?.[fallbackIndex]) fallbackIndex=null;
+  const s = activeSlot(key);
+  const memoryKey=editorMemoryKey(key);
+  $('#font-page-title').textContent = title + (fallbackIndex === null ? '' : ` · 补字 ${fallbackIndex+1}`);
+  $('#font-page-position').textContent = `${index + 1} / ${entries.length} 个分类 · ${description}`;
+  $('#slot-previous').classList.toggle('off', index === 0); $('#slot-next').classList.toggle('off', index === entries.length - 1);
   pressed('#step-font', editorStep === 'font'); pressed('#step-weight', editorStep === 'weight');
   const editor = text('section', '', 'slot-editor glass'); editor.dataset.slot = key;
   if (editorStep === 'font') {
-    editor.append(segmentedField('字体类型', [['system', '沿用系统'], ['variable', '可变字体'], ['static', '静态多字重']], s.mode, mode => {
-      (modeMemory[key] ??= {})[s.mode] = structuredClone(s);
-      profile.slots[key] = rememberedSlot(key, mode) || (mode === 'system' ? { mode } : mode === 'variable' ? { mode, assetId: '', faceIndex: 0, familyMode: 'instances', weightMap: Object.fromEntries(weights.map(w => [w, w])) } : { mode, missingWeightPolicy: 'nearest', faces: [] }); renderSlots();
+    editor.append(segmentedField('字体类型', [...(fallbackIndex === null ? [['system', '沿用系统']] : []), ['variable', '可变字体'], ['static', '静态多字重']], s.mode, mode => {
+      (modeMemory[memoryKey] ??= {})[s.mode] = structuredClone(s);
+      setActiveSlot(key, rememberedSlot(key, mode) || (mode === 'system' ? { mode } : mode === 'variable' ? { mode, assetId: '', faceIndex: 0, familyMode: 'instances', weightMap: Object.fromEntries(weights.map(w => [w, w])) } : { mode, missingWeightPolicy: 'nearest', faces: [] })); renderSlots();
     }));
     if (s.mode === 'system') editor.append(text('p', '这一类沿用系统字体。选择“可变字体”或“静态多字重”后，可从字体库指定文件。', 'field-help'));
     if (s.mode === 'variable') {
@@ -175,8 +185,8 @@ function renderSlots(openKey) {
         editor.append(selectField('字体家族', [['', '选择后自动填入九档'], ...families.map(f => [f, `${f} · ${entries.filter(o => familyOf(o) === f).length} 个字体面`])], families.includes(current) ? current : '', family => {
           if (!family) return;
           const refs = spreadFamily(entries.filter(o => familyOf(o) === family), weights);
-          s.faces = refs.map(({ guess, ...r }) => r); reviewSteps[key] = new Map(refs.filter(r => r.guess).map(r => [`${r.style}:${r.weight}`, r.guess === 'name' ? '按文件名推断' : '字重相同，按文件名顺序排'])); editorStep = 'weight'; renderSlots();
-          const guessed = reviewSteps[key].size; toast(`已用 ${family} 填入 ${new Set(s.faces.map(r => r.weight)).size} 档${guessed ? `，标“请核对”的 ${guessed} 档是推断的，请看一眼` : ''}`);
+          s.faces = refs.map(({ guess, ...r }) => r); reviewSteps[memoryKey] = new Map(refs.filter(r => r.guess).map(r => [`${r.style}:${r.weight}`, r.guess === 'name' ? '按文件名推断' : '字重相同，按文件名顺序排'])); editorStep = 'weight'; renderSlots();
+          const guessed = reviewSteps[memoryKey].size; toast(`已用 ${family} 填入 ${new Set(s.faces.map(r => r.weight)).size} 档${guessed ? `，标“请核对”的 ${guessed} 档是推断的，请看一眼` : ''}`);
         }));
         editor.append(text('p', '选家族后自动分配九档：文件自带的字重优先，其次看文件名里的 Light、Bold、W3、300 等，剩下的按文件名从细到粗排。推断出的档会标“请核对”。', 'field-help'));
       }
@@ -195,7 +205,7 @@ function renderSlots(openKey) {
         const applyShift = sign => {
           const delta = Number(amount.value); if (!Number.isFinite(delta) || delta === 0) { toast('请输入要统一调整的数值'); return; }
           // Shift from the values before the first shift, so capped steps get their spacing back when shifted the other way.
-          let shiftBase = shiftBases[selectedSlot]; if (shiftBase?.last !== JSON.stringify(s.weightMap)) shiftBase = shiftBases[selectedSlot] = { map: {...s.weightMap}, offset: 0 };
+          let shiftBase = shiftBases[memoryKey]; if (shiftBase?.last !== JSON.stringify(s.weightMap)) shiftBase = shiftBases[memoryKey] = { map: {...s.weightMap}, offset: 0 };
           shiftBase.offset += sign * delta;
           const raw = shiftWeightMap(shiftBase.map, shiftBase.offset); s.weightMap = shiftWeightMap(shiftBase.map, shiftBase.offset, wght); shiftBase.last = JSON.stringify(s.weightMap);
           const capped = weights.some(w => raw[w] !== s.weightMap[w]);
@@ -204,7 +214,7 @@ function renderSlots(openKey) {
         const minus = text('button', '整体减', 'glass-button'); minus.type = 'button'; minus.onclick = () => applyShift(-1);
         const plus = text('button', '整体加', 'glass-button'); plus.type = 'button'; plus.onclick = () => applyShift(1);
         shift.append(text('span', '统一调整'), minus, amount, plus); editor.append(shift);
-        const reset = text('button', '默认', 'glass-button reset-weights'); reset.type = 'button'; reset.dataset.unavailable = String(!wght); reset.onclick = () => { resetWeightMap(s, defaultMap); delete shiftBases[key]; markDirty(); renderSlots(); toast('九档已恢复默认值'); }; editor.append(reset);
+        const reset = text('button', '默认', 'glass-button reset-weights'); reset.type = 'button'; reset.dataset.unavailable = String(!wght); reset.onclick = () => { resetWeightMap(s, defaultMap); delete shiftBases[memoryKey]; markDirty(); renderSlots(); toast('九档已恢复默认值'); }; editor.append(reset);
         const rows = text('div', '', 'weight-rows'); const checks = []; const problemHint = text('p', '', 'field-help weight-problem');
         const markRows = () => { const problems = weightMapProblems(s.weightMap, weights, wght); for (const [w, row] of checks) { row.classList.toggle('invalid', !!problems[w]); row.title = problems[w]; } const first = weights.find(w => problems[w]); problemHint.textContent = first ? `${first} 档：${problems[first]}` : ''; problemHint.hidden = !first; };
         for (const w of weights) {
@@ -220,8 +230,8 @@ function renderSlots(openKey) {
           const updateButtons = () => { const valid = wght && Number.isFinite(s.weightMap[w]); decrease.dataset.unavailable = String(!valid || s.weightMap[w] <= wght.min); increase.dataset.unavailable = String(!valid || s.weightMap[w] >= wght.max); refreshDisabled(); };
           const syncSlider = () => { slider.value = Number.isFinite(s.weightMap[w]) ? s.weightMap[w] : slider.min; slider.style.setProperty('--fill', weightBar(Number(slider.value), track)); };
           syncSlider();
-          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); updateButtons(); delete shiftBases[key]; markDirty(w); markRows(); };
-          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); updateButtons(); delete shiftBases[key]; markDirty(w); markRows(); };
+          input.oninput = () => { s.weightMap[w] = input.value === '' ? NaN : Number(input.value); syncSlider(); updateButtons(); delete shiftBases[memoryKey]; markDirty(w); markRows(); };
+          const setValue = value => { s.weightMap[w] = value; input.value = value; slider.value = value; slider.style.setProperty('--fill', weightBar(value, track)); updateButtons(); delete shiftBases[memoryKey]; markDirty(w); markRows(); };
           decrease.onclick = () => setValue(adjustWeight(s.weightMap[w], -50, wght));
           increase.onclick = () => setValue(adjustWeight(s.weightMap[w], 50, wght)); updateButtons();
           slider.oninput = () => setValue(snapWeight(Number(slider.value), wght));
@@ -238,15 +248,17 @@ function renderSlots(openKey) {
     }
     if (s.mode === 'static') {
       editor.append(selectField('缺少字重时', [['nearest', '使用最近的已有字重'], ['reject', '必须提供完整九档正体']], s.missingWeightPolicy, value => s.missingWeightPolicy = value));
-      if (reviewSteps[key]?.size) editor.append(text('p', '标“请核对”的档不是按字体自带的字重填的：要么是看文件名里的 Light、Bold 等推断的，要么是几个文件字重相同、按文件名顺序排的。看一眼对不对；改选后标记消失。', 'field-help review-hint'));
+      if (reviewSteps[memoryKey]?.size) editor.append(text('p', '标“请核对”的档不是按字体自带的字重填的：要么是看文件名里的 Light、Bold 等推断的，要么是几个文件字重相同、按文件名顺序排的。看一眼对不对；改选后标记消失。', 'field-help review-hint'));
       const table = document.createElement('table'); table.className = 'weight-table'; const head = document.createElement('thead'); const tr = document.createElement('tr'); ['请求', '正体文件', '斜体文件'].forEach(t => tr.append(text('th', t))); head.append(tr); table.append(head); const body = document.createElement('tbody');
-      for (const weight of weights) { const row = document.createElement('tr'); row.append(text('td', weight)); for (const style of ['normal', 'italic']) { const cell = document.createElement('td'); const sel = document.createElement('select'); sel.setAttribute('aria-label', `${title} ${weight} ${style === 'normal' ? '正体' : '斜体'}`); sel.append(option('', '未指定')); faceOptions(sel, faceList(key, 'static', style === 'italic')); const ref = s.faces.find(r => r.weight === weight && r.style === style); sel.value = ref ? `${ref.assetId}:${ref.faceIndex}` : ''; const mark = `${style}:${weight}`, check = reviewSteps[key]?.has(mark) && ref; const badge = text('span', `请核对 · ${reviewSteps[key]?.get(mark) || ''}`, 'review-badge'); if (check) cell.classList.add('review'); sel.onchange = () => { s.faces = s.faces.filter(r => r.weight !== weight || r.style !== style); if (sel.value) { const [assetId, index] = sel.value.split(':'); s.faces.push({ assetId, faceIndex: Number(index), weight, style }); } reviewSteps[key]?.delete(mark); cell.classList.remove('review'); badge.remove(); markDirty(weight, style); }; cell.append(sel); if (check) cell.append(badge); row.append(cell); } body.append(row); } table.append(body); editor.append(table);
+      for (const weight of weights) { const row = document.createElement('tr'); row.append(text('td', weight)); for (const style of ['normal', 'italic']) { const cell = document.createElement('td'); const sel = document.createElement('select'); sel.setAttribute('aria-label', `${title} ${weight} ${style === 'normal' ? '正体' : '斜体'}`); sel.append(option('', '未指定')); faceOptions(sel, faceList(key, 'static', style === 'italic')); const ref = s.faces.find(r => r.weight === weight && r.style === style); sel.value = ref ? `${ref.assetId}:${ref.faceIndex}` : ''; const mark = `${style}:${weight}`, check = reviewSteps[memoryKey]?.has(mark) && ref; const badge = text('span', `请核对 · ${reviewSteps[memoryKey]?.get(mark) || ''}`, 'review-badge'); if (check) cell.classList.add('review'); sel.onchange = () => { s.faces = s.faces.filter(r => r.weight !== weight || r.style !== style); if (sel.value) { const [assetId, index] = sel.value.split(':'); s.faces.push({ assetId, faceIndex: Number(index), weight, style }); } reviewSteps[memoryKey]?.delete(mark); cell.classList.remove('review'); badge.remove(); markDirty(weight, style); }; cell.append(sel); if (check) cell.append(badge); row.append(cell); } body.append(row); } table.append(body); editor.append(table);
     }
   }
   if (editorStep === 'weight') {
-    previewWidget ||= createPreview({request,lookup:faceMeta,key,getSlot:()=>profile.slots[key]});
+    previewWidget ||= createPreview({request,lookup:faceMeta,key,getSlot:()=>activeSlot(key)});
     editor.prepend(previewWidget.root); previewWidget.refresh();
   }
+  if (fallbackIndex !== null) { const back=text('button','返回主字体','glass-button');back.onclick=()=>{fallbackIndex=null;previewWidget?.dispose();previewWidget=null;renderSlots();};editor.prepend(back); }
+  else if(s.mode !== 'system') editor.append(fallbackEditor({slot:s,fonts,rule:findRule(profile,key)||{scripts:[key==='chinese'?'Hani':'Latn'],role:'sans'},markDirty,render:()=>renderSlots(),openFont:i=>{fallbackIndex=i;editorStep='font';previewWidget?.dispose();previewWidget=null;}}));
   root.append(editor); refreshDisabled();
 }
 function fontTags(font) {
@@ -262,7 +274,8 @@ function fontTags(font) {
 // Where an asset is referenced. The engine refuses to delete fonts used by the saved draft,
 // the pending or the active configuration; unsaved edits only need re-picking afterwards.
 function fontUses(id, saved = true) {
-  const refs = p => Object.values(p?.slots || {}).flatMap(x => [x.assetId, x.italicAssetId, ...(x.faces || []).map(r => r.assetId)]);
+  const collect = x => [x.assetId,x.italicAssetId,...(x.faces||[]).map(r=>r.assetId),...(x.fallbacks||[]).flatMap(collect)];
+  const refs = p => [...Object.values(p?.slots||{}),...(p?.coverage?.rules||[]).map(r=>r.font)].flatMap(collect);
   const sources = saved ? [['已保存的草稿', status?.draft], ['待生效配置', status?.pending?.profile], ['正在使用的配置', status?.active?.profile]] : [['未保存的编辑', profile]];
   return sources.filter(([, p]) => refs(p).includes(id)).map(([name]) => name);
 }
@@ -270,8 +283,9 @@ function fontUses(id, saved = true) {
 // Returns the titles of the categories that need a new pick.
 function forgetFonts(ids) {
   const touched = [];
-  for (const [key, title] of slots) {
-    const x = profile.slots[key], before = JSON.stringify(x);
+  for (const [key, title] of editorEntries(profile,slots)) {
+    const x = getSlot(profile,key), before = JSON.stringify(x);
+    x.fallbacks=x.fallbacks?.filter(f=>!ids.has(f.assetId)&&!(f.faces||[]).some(r=>ids.has(r.assetId)));
     if (ids.has(x.assetId)) { x.assetId = ''; x.faceIndex = 0; }
     if (ids.has(x.italicAssetId)) { delete x.italicAssetId; delete x.italicFaceIndex; }
     if (x.faces?.some(r => ids.has(r.assetId))) x.faces = x.faces.filter(r => !ids.has(r.assetId));
@@ -343,9 +357,9 @@ function renderStatus() {
   const compat = status.fontCompatibility;
   if (compat?.needed) dl.append(text('dt', '小米默认字重'), text('dd', compat.preparedThisBoot ? '兼容层已准备；需启用 Zygisk，应用效果待验收' : '请启用 Zygisk，并手动重启以加载兼容层'));
 }
-async function loadStatus(keepDraft = false) { $('#validation').hidden = true; status = await request({ op: 'status' }); fonts = status.library || []; fonts.forEach(f => knownLabels.set(f.id, f.label)); if (!keepDraft) { profile = structuredClone(status.draft); modeMemory = {}; shiftBases = {}; reviewSteps = {}; dirty = false; $('#profile-name').value = profile.name; } renderStatus(); renderSlots(); renderLibrary(); }
+async function loadStatus(keepDraft = false) { $('#validation').hidden = true; status = await request({ op: 'status' }); fonts = status.library || []; fonts.forEach(f => knownLabels.set(f.id, f.label)); if (!keepDraft) { profile = structuredClone(status.draft); modeMemory = {}; shiftBases = {}; reviewSteps = {}; selectedSlot=null; fallbackIndex=null; dirty = false; $('#profile-name').value = profile.name; } renderStatus(); renderSlots(); renderLibrary(); coveragePanel?.refresh(); }
 function currentProfile() { profile.name = $('#profile-name').value.trim(); const encoded = JSON.stringify(profile); if (encoded.includes(':null')) throw new Error('请填写所有字重与轴值'); return profile; }
-function moveSlot(step) { const index = slots.findIndex(([key]) => key === selectedSlot) + step; if (index < 0 || index >= slots.length) return; renderSlots(slots[index][0]); window.scrollTo(0, 0); }
+function moveSlot(step) { const entries=editorEntries(profile,slots);const index = entries.findIndex(([key]) => key === selectedSlot) + step; if (index < 0 || index >= entries.length) return; renderSlots(entries[index][0]); window.scrollTo(0, 0); }
 function setStep(step) { editorStep = step; renderSlots(); window.scrollTo(0, 0); }
 document.querySelectorAll('.tab-bar button').forEach(button => button.onclick = () => showTab(button.dataset.tab));
 $('#profile-name').oninput = () => markDirty();
@@ -460,7 +474,8 @@ $('#font-file').onchange = event => run(async () => {
   toast(summary);
   if (document.body.dataset.tab === 'import') renderImportErrors(summary, failed); else validation(summary, failed, true);
 });
-const schemes = mountSchemes({request,run,toast,confirmAction,currentProfile,getDirty:()=>dirty,loadStatus,available:native||isPreview,loadProfile:p=>{profile=structuredClone(p);$('#profile-name').value=p.name;modeMemory={};shiftBases={};reviewSteps={};selectedSlot=null;markDirty();renderSlots();},staged:async()=>{dirty=false;selectedSlot=null;await loadStatus();}});
+const coveragePanel = mountCoverage({request,run,toast,getProfile:()=>profile,getFonts:()=>fonts,getCapabilities:()=>status?.coverageCapabilities,markDirty,openRule:key=>{editorStep='font';renderSlots(key);},renderSlots:()=>renderSlots()});
+const schemes = mountSchemes({request,run,toast,confirmAction,currentProfile,getDirty:()=>dirty,loadStatus,available:native||isPreview,loadProfile:p=>{profile=structuredClone(p);$('#profile-name').value=p.name;modeMemory={};shiftBases={};reviewSteps={};selectedSlot=null;fallbackIndex=null;markDirty();renderSlots();coveragePanel.refresh();},staged:async()=>{dirty=false;selectedSlot=null;await loadStatus();}});
 $('#preview-banner').hidden = !isPreview; renderTitle();
 if (!native && !isPreview) { $('#offline').hidden = false; $('#status-title').textContent = '尚未连接模块'; $('#status-description').textContent = '从模块管理器进入 WebUI 后可读取手机配置。'; renderSlots(); renderLibrary(); document.querySelectorAll('button,input,select').forEach(e => e.disabled = true); document.querySelectorAll('.tab-bar button').forEach(e => e.disabled = false); }
 else run(async () => { await loadStatus(); await schemes.refresh(); });

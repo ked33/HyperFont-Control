@@ -67,7 +67,7 @@ func tables(b fontData, offset int) map[string]fontData {
 			panic("缺少必需字体表 " + k)
 		}
 	}
-	if len(m["glyf"]) == 0 && len(m["CFF "]) == 0 && len(m["CFF2"]) == 0 {
+	if len(m["glyf"]) == 0 && len(m["CFF "]) == 0 && len(m["CFF2"]) == 0 && len(m["CBDT"]) == 0 && len(m["sbix"]) == 0 && len(m["SVG "]) == 0 {
 		panic("缺少轮廓表")
 	}
 	return m
@@ -79,6 +79,8 @@ func charmap(t map[string]fontData) map[uint32]uint16 {
 		panic("cmap 子表过多")
 	}
 	out := map[uint32]uint16{}
+	work := 0
+	supported := false
 	maxGlyph := t["maxp"].u16(4)
 	add := func(c, g int) {
 		if c < 0 || c > 0x10FFFF || c >= 0xD800 && c <= 0xDFFF || g < 0 || g >= maxGlyph {
@@ -88,8 +90,8 @@ func charmap(t map[string]fontData) map[uint32]uint16 {
 			out[uint32(c)] = uint16(g)
 		}
 	}
-	// Unicode format 12 overrides format 4 if both are present.
-	for _, format := range []int{4, 12} {
+	// Many-to-one format 13 is a last-resort map; explicit maps override it.
+	for _, format := range []int{13, 4, 12} {
 		for i := 0; i < n; i++ {
 			platform, enc := b.u16(4+i*8), b.u16(6+i*8)
 			if platform != 0 && !(platform == 3 && (enc == 1 || enc == 10)) {
@@ -99,25 +101,36 @@ func charmap(t map[string]fontData) map[uint32]uint16 {
 			if sub.u16(0) != format {
 				continue
 			}
-			if format == 12 {
+			supported = true
+			if format == 12 || format == 13 {
 				sub = sub.cut(0, sub.u32(4))
 				groups := sub.u32(12)
 				if groups > 100000 {
 					panic("cmap 分组过多")
 				}
 				total := 0
+				previousEnd := -1
 				for j := 0; j < groups; j++ {
 					p := 16 + j*12
 					a, z, g := sub.u32(p), sub.u32(p+4), sub.u32(p+8)
-					if a > z || z > 0x10FFFF {
+					if a > z || z > 0x10FFFF || a <= previousEnd {
 						panic("cmap 范围错误")
 					}
+					previousEnd = z
 					total += z - a + 1
 					if total > 1114112 {
 						panic("cmap 重叠或过大")
 					}
 					for c := a; c <= z; c++ {
-						add(c, g+c-a)
+						work++
+						if work > 4*1114112 {
+							panic("cmap 总量过大")
+						}
+						if format == 13 {
+							add(c, g)
+						} else {
+							add(c, g+c-a)
+						}
 					}
 				}
 			} else {
@@ -141,6 +154,10 @@ func charmap(t map[string]fontData) map[uint32]uint16 {
 						panic("cmap 段倒序")
 					}
 					for c := start; c <= end && c != 65535; c++ {
+						work++
+						if work > 4*1114112 {
+							panic("cmap 总量过大")
+						}
 						g := (c + delta) & 65535
 						if off != 0 {
 							g = sub.u16(rp + off + (c-start)*2)
@@ -154,7 +171,7 @@ func charmap(t map[string]fontData) map[uint32]uint16 {
 			}
 		}
 	}
-	if len(out) == 0 {
+	if !supported {
 		panic("没有支持的 Unicode cmap")
 	}
 	return out
@@ -231,8 +248,12 @@ func ParseFont(b []byte) (faces []Face, err error) {
 			}
 		}
 		cm := charmap(t)
+		if len(cm) == 0 {
+			panic("没有 Unicode 字形映射")
+		}
 		f.Chinese = cm[0x4e2d] != 0 && cm[0x6587] != 0
 		f.Latin = cm['A'] != 0 && cm['a'] != 0 && cm['0'] != 0
+		faceCoverage(&f, cm, t)
 		faces = append(faces, f)
 	}
 	return
@@ -266,7 +287,7 @@ func isLatin(c uint32) bool {
 func makeCmap(cm map[uint32]uint16, filter string) []byte {
 	keys := []int{}
 	for c := range cm {
-		keep := filter == "all" || filter == "cjk" && isCJK(c) || filter == "without-cjk" && !isCJK(c) || filter == "latin" && isLatin(c)
+		keep := scopeKeeps(c, filter)
 		if keep {
 			keys = append(keys, int(c))
 		}
@@ -317,13 +338,12 @@ func RewriteFont(b []byte, index int, filter string) (result []byte, err error) 
 	}
 	off := offs[index]
 	t := tables(data, off)
-	if filter != "cjk" && filter != "latin" && filter != "without-cjk" && filter != "all" {
+	if !validScope(filter) {
 		return nil, fmt.Errorf("未知过滤范围")
 	}
 	// Preserve all outlines, variation data, shaping tables and vertical metrics.
-	// Only Unicode entry points change. Format 14 is intentionally not propagated
-	// into replacement fonts: stock fallback remains responsible for emoji/IVS.
-	t["cmap"] = makeCmap(charmap(t), filter)
+	// Only Unicode entry points change, including filtered format-14 sequences.
+	t["cmap"] = replacementCmap(t, filter)
 	delete(t, "DSIG")
 	head := bytes.Clone(t["head"])
 	put32(head, 8, 0)

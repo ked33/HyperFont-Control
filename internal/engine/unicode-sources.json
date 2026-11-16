@@ -1,0 +1,21 @@
+{
+  "version": "16.0.0",
+  "sources": {
+    "Scripts.txt": {
+      "url": "https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/16.0.0/Scripts.txt",
+      "sha256": "9e88f0a677df47311106340be8ede2ecdacd9c1c931831218d2be6d5508e0039"
+    },
+    "ScriptExtensions.txt": {
+      "url": "https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/16.0.0/ScriptExtensions.txt",
+      "sha256": "049117ce26b9769fe2749b06eef51a50a89faef4a97764dd2d81daa715980700"
+    },
+    "PropertyValueAliases.txt": {
+      "url": "https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/16.0.0/PropertyValueAliases.txt",
+      "sha256": "440fd3e5460b9bfe31da67b6f923992e1989d31fe2ed91e091c4b8f8e2620bf9"
+    },
+    "emoji-data.txt": {
+      "url": "https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/16.0.0/emoji/emoji-data.txt",
+      "sha256": "f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a"
+    }
+  }
+}
