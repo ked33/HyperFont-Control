@@ -32,7 +32,7 @@ def verify_elf(path, arch, diagnostics):
                 index,info,other,defined,_,_=struct.unpack_from('<IBBHQQ',data,pos)
                 if index:(exported if defined else undefined).add(name(index))
     assert needed==['libc.so'],needed
-    assert undefined<={'open','read','close'},undefined
+    assert undefined<={'open','read','close','unshare','mount','umount2','lseek','dup2','readlink','write','getpid','memset','ioctl','ftruncate','mmap','munmap'},undefined
     assert 'zygisk_module_entry' in exported,exported
     assert ('Java_local_hyperfont_FontCompatProbe_apply' in exported)==diagnostics
     phoff=struct.unpack_from('<Q',data,32)[0]
@@ -59,7 +59,7 @@ def build(output, arch="arm64", diagnostics=False):
     # Relying on the parent's loaded libc fails inside Android linker namespaces.
     stub_obj = CACHE / ("libc-import-" + arch + ".o")
     stub = CACHE / ("libc-import-" + arch + ".so")
-    source = 'extern "C" { int open(const char*,int,...){return -1;} long read(int,void*,unsigned long){return -1;} long write(int,const void*,unsigned long){return -1;} int close(int){return -1;} }'
+    source = 'extern "C" { int open(const char*,int,...){return -1;} long read(int,void*,unsigned long){return -1;} long write(int,const void*,unsigned long){return -1;} int close(int){return -1;} int unshare(int){return -1;} int mount(const char*,const char*,const char*,unsigned long,const void*){return -1;} int umount2(const char*,int){return -1;} long lseek(int,long,int){return -1;} int dup2(int,int){return -1;} long readlink(const char*,char*,unsigned long){return -1;} int getpid(){return -1;} int ioctl(int,unsigned long,...){return -1;} int ftruncate(int,long){return -1;} void* mmap(void*,unsigned long,int,int,int,long){return (void*)-1;} int munmap(void*,unsigned long){return -1;} void* memset(void* p,int,unsigned long){return p;} }'
     subprocess.run([CLANG, "--target=" + triple, "-x", "c++", "-ffreestanding", "-fPIC", "-fno-stack-protector", "-fno-exceptions", "-fno-rtti", "-c", "-", "-o", str(stub_obj)], input=source, text=True, check=True)
     subprocess.run([str(LLD), "-shared", "-soname", "libc.so", "-o", str(stub), str(stub_obj)], check=True)
     subprocess.run([str(LLD), "-shared", "--no-undefined", "-z", "max-page-size=16384", "-z", "relro", "-z", "now", "--hash-style=both", "--build-id=sha1", "-soname", "hyperfont_compat.so", "-o", str(output), str(obj), str(stub)], check=True)

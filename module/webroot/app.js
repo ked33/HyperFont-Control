@@ -1,6 +1,7 @@
 import { createPreview } from './preview.js';
 import { editorEntries, findRule, getSlot, putSlot, faceEligible, mountCoverage, fallbackEditor } from './coverage.js';
 import { mountSchemes } from './schemes.js';
+import { mountExemptions } from './exemptions.js';
 import { changeWeightMode, shiftWeightMap, weightMapProblems, adjustWeight, resetWeightMap } from './weights.js';
 import { faceFamily, faceOptionLabel, fileStem, fontFamily, groupDownloads, groupFonts, naturalCompare, spreadFamily } from './library.js';
 const $ = (q, root = document) => root.querySelector(q);
@@ -357,7 +358,7 @@ function renderStatus() {
   const compat = status.fontCompatibility;
   if (compat?.needed) dl.append(text('dt', '小米默认字重'), text('dd', compat.preparedThisBoot ? '兼容层已准备；需启用 Zygisk，应用效果待验收' : '请启用 Zygisk，并手动重启以加载兼容层'));
 }
-async function loadStatus(keepDraft = false) { $('#validation').hidden = true; status = await request({ op: 'status' }); fonts = status.library || []; fonts.forEach(f => knownLabels.set(f.id, f.label)); if (!keepDraft) { profile = structuredClone(status.draft); modeMemory = {}; shiftBases = {}; reviewSteps = {}; selectedSlot=null; fallbackIndex=null; dirty = false; $('#profile-name').value = profile.name; } renderStatus(); renderSlots(); renderLibrary(); coveragePanel?.refresh(); }
+async function loadStatus(keepDraft = false) { $('#validation').hidden = true; status = await request({ op: 'status' }); fonts = status.library || []; fonts.forEach(f => knownLabels.set(f.id, f.label)); if (!keepDraft) { profile = structuredClone(status.draft); modeMemory = {}; shiftBases = {}; reviewSteps = {}; selectedSlot=null; fallbackIndex=null; dirty = false; $('#profile-name').value = profile.name; } renderStatus(); renderSlots(); renderLibrary(); coveragePanel?.refresh(); exemptionPanel?.refresh(); }
 function currentProfile() { profile.name = $('#profile-name').value.trim(); const encoded = JSON.stringify(profile); if (encoded.includes(':null')) throw new Error('请填写所有字重与轴值'); return profile; }
 function moveSlot(step) { const entries=editorEntries(profile,slots);const index = entries.findIndex(([key]) => key === selectedSlot) + step; if (index < 0 || index >= entries.length) return; renderSlots(entries[index][0]); window.scrollTo(0, 0); }
 function setStep(step) { editorStep = step; renderSlots(); window.scrollTo(0, 0); }
@@ -475,7 +476,8 @@ $('#font-file').onchange = event => run(async () => {
   if (document.body.dataset.tab === 'import') renderImportErrors(summary, failed); else validation(summary, failed, true);
 });
 const coveragePanel = mountCoverage({request,run,toast,getProfile:()=>profile,getFonts:()=>fonts,getCapabilities:()=>status?.coverageCapabilities,markDirty,openRule:key=>{editorStep='font';renderSlots(key);},renderSlots:()=>renderSlots()});
-const schemes = mountSchemes({request,run,toast,confirmAction,currentProfile,getDirty:()=>dirty,loadStatus,available:native||isPreview,loadProfile:p=>{profile=structuredClone(p);$('#profile-name').value=p.name;modeMemory={};shiftBases={};reviewSteps={};selectedSlot=null;fallbackIndex=null;markDirty();renderSlots();coveragePanel.refresh();},staged:async()=>{dirty=false;selectedSlot=null;await loadStatus();}});
+const exemptionPanel = mountExemptions({request,run,getProfile:()=>profile,getStatus:()=>status,markDirty});
+const schemes = mountSchemes({request,run,toast,confirmAction,currentProfile,getDirty:()=>dirty,loadStatus,available:native||isPreview,loadProfile:p=>{profile=structuredClone(p);$('#profile-name').value=p.name;modeMemory={};shiftBases={};reviewSteps={};selectedSlot=null;fallbackIndex=null;markDirty();renderSlots();coveragePanel.refresh();exemptionPanel.refresh();},staged:async()=>{dirty=false;selectedSlot=null;await loadStatus();}});
 $('#preview-banner').hidden = !isPreview; renderTitle();
 if (!native && !isPreview) { $('#offline').hidden = false; $('#status-title').textContent = '尚未连接模块'; $('#status-description').textContent = '从模块管理器进入 WebUI 后可读取手机配置。'; renderSlots(); renderLibrary(); document.querySelectorAll('button,input,select').forEach(e => e.disabled = true); document.querySelectorAll('.tab-bar button').forEach(e => e.disabled = false); }
 else run(async () => { await loadStatus(); await schemes.refresh(); });

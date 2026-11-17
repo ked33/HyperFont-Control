@@ -5,6 +5,8 @@
 | 操作 | 输入 | 结果 |
 |---|---|---|
 | status | 无 | 字体库、草稿、active/pending、当前启动记录与文件可见性 |
+| installed_apps | 无 | 按需枚举主用户应用名称、包名、UID、system 标志 |
+| exemption_evidence | package | 当前存活进程的启动豁免里程碑；不证明界面文字 |
 | init | 无 | 首次读取 ROM 原生字体表 |
 | import_path | path, 可选 label | 仅从 Download 导入；返回内容哈希和元数据 |
 | list_downloads | 无 | 列出 Download 及其下一层文件夹里的字体（跳过隐藏文件）；返回 path、name、size、modified、imported、folder。找不到 Download 时报错 |
@@ -73,3 +75,5 @@ ZIP v1 只允许 manifest.json 与 fonts/<SHA256>.font。清单 format=hyperfont
 可选 profile.coverage 包含 autoFamilies、engineCompatibility 和 rules。规则按数组顺序排列，支持 role、scripts、languages、families、font；Slot.fallbacks 为最多八个不嵌套的字体设置。Emoji/符号按专用范围过滤；图标仅指定字体族的私用区。Han 规则必须指定语言。
 
 诊断结果 verification 是证据级别，不是成功状态。glyph_probe 在独立进程优先重建 FontManager 当前配置，失败时重建预装配置，fontMapSource 标明来源；它不能代表应用已缓存的字体映射或 Unicorn/Flutter 私有字体集合。
+
+应用豁免：配置增加可选 `exemptPackages: string[]`，最多 128 个唯一包名；省略或空数组保持旧行为。与方案和备份一起保存，手动重启生效。`status.appExemptions.boot` 含本次开机 packages、appIds、prepared、warnings、mapBytes；准备完成不等于 Zygisk 已在目标进程生效。详见 [应用字体豁免](app-exemptions.md)。
