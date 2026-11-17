@@ -11,7 +11,7 @@ import zipfile
 from build_compat import build as build_compat
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.7.0"
+VERSION = "2.6.0"
 CACHE = Path.home() / ".cache/hyperfont-control-build"
 CACHE.mkdir(parents=True, exist_ok=True)
 JOBS = max(1, min(8, int(os.environ.get("HFC_BUILD_JOBS", "1"))))
@@ -36,9 +36,6 @@ if not prop.get("updateJson", "").startswith("https://"):
 run(["go", "test", f"-p={JOBS}", "./..."])
 run(["go", "vet", f"-p={JOBS}", "./..."])
 run(["node", "--test", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tests").glob("*.test.mjs"))])
-native_test = CACHE / "exemptions-native-test"
-run([os.environ.get("HFC_CLANG", "clang++"), "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "native/third_party", ROOT / "native/exemptions_test.cpp", "-o", native_test])
-run([native_test])
 with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
     stage = Path(temporary) / "module"
     shutil.copytree(ROOT / "module", stage)
@@ -72,14 +69,6 @@ with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
         item.compress_type = zipfile.ZIP_DEFLATED
         item.external_attr = 0o100644 << 16
         z.writestr(item, (probe_dex / "classes.dex").read_bytes())
-    for name, jar in [("AppInventory", "app-inventory.jar"), ("StockFontMap", "stock-font-map.jar")]:
-        helper_classes = Path(temporary) / (name + "-classes")
-        helper_dex = Path(temporary) / (name + "-dex")
-        helper_classes.mkdir(); helper_dex.mkdir()
-        run([JAVA / "bin/javac", "-source", "8", "-target", "8", "-classpath", android, "-d", helper_classes, ROOT / "android" / (name + ".java")])
-        run([SDK / "build-tools" / BUILD_TOOLS / "d8", "--min-api", "29", "--lib", android, "--output", helper_dex, helper_classes / "local/hyperfont" / (name + ".class")])
-        with zipfile.ZipFile(stage / "bin" / jar, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("classes.dex", (helper_dex / "classes.dex").read_bytes())
     shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
     shutil.copy2(ROOT / "internal/engine/UNICODE-LICENSE.txt", stage / "UNICODE-LICENSE.txt")
     shutil.copy2(ROOT / "internal/engine/unicode-sources.json", stage / "unicode-sources.json")
@@ -107,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix="package-", dir=CACHE) as temporary:
     with zipfile.ZipFile(archive) as z:
         assert z.testzip() is None
         names = set(z.namelist())
-        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/preview-loader.js", "webroot/schemes.js", "webroot/coverage.js", "webroot/exemptions.js", "bin/app-inventory.jar", "bin/stock-font-map.jar", "bin/font-route-probe.jar", "UNICODE-LICENSE.txt", "unicode-sources.json", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
+        assert {"skip_mount", "module.prop", "customize.sh", "post-mount.sh", "service.sh", "boot-completed.sh", "uninstall.sh", "webroot/index.html", "webroot/weights.js", "webroot/library.js", "webroot/preview.js", "webroot/preview-loader.js", "webroot/schemes.js", "webroot/coverage.js", "bin/font-route-probe.jar", "UNICODE-LICENSE.txt", "unicode-sources.json", "bin/arm64/hfctl", "bin/x86_64/hfctl", "bin/verify-fonts.jar", "zygisk/arm64-v8a.so", "zygisk/x86_64.so"} <= names
         assert not any(n.startswith("system/") for n in names)
         assert not any(n.endswith((".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".font")) for n in names)
         assert not any("libc-import" in n or n.endswith("/libc.so") for n in names)

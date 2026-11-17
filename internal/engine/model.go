@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const Version = "2.7.0"
+const Version = "2.6.0"
 const MaxFontSize = 256 << 20
 
 var assetPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -73,12 +73,11 @@ type Slot struct {
 	Fallbacks           []Slot             `json:"fallbacks,omitempty"`
 }
 type Profile struct {
-	SchemaVersion  int             `json:"schemaVersion"`
-	Name           string          `json:"name"`
-	Activation     string          `json:"activation"`
-	Slots          map[string]Slot `json:"slots"`
-	Coverage       *CoverageConfig `json:"coverage,omitempty"`
-	ExemptPackages []string        `json:"exemptPackages,omitempty"`
+	SchemaVersion int             `json:"schemaVersion"`
+	Name          string          `json:"name"`
+	Activation    string          `json:"activation"`
+	Slots         map[string]Slot `json:"slots"`
+	Coverage      *CoverageConfig `json:"coverage,omitempty"`
 }
 
 func DefaultProfile() Profile {
@@ -139,12 +138,6 @@ func (s *Store) lookup(id string, idx int) (Asset, Face, error) {
 }
 func (s *Store) Validate(p Profile) ([]string, error) {
 	var warnings []string
-	if err := validateExemptions(p.ExemptPackages); err != nil {
-		return nil, err
-	}
-	if len(p.ExemptPackages) > 0 {
-		warnings = append(warnings, "应用豁免需要 Zygisk 与手动重启；共享 UID 须全部选择，隔离进程不自动继承豁免。")
-	}
 	if p.SchemaVersion != 1 || p.Activation != "manual-reboot" || len(p.Name) == 0 || len([]rune(p.Name)) > 80 {
 		return nil, fmt.Errorf("配置版本、名称或生效方式无效")
 	}

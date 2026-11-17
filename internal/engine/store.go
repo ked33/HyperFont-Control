@@ -161,7 +161,6 @@ type BootRecord struct {
 	Error        string              `json:"error,omitempty"`
 	Verified     string              `json:"verification"`
 	ConfigChecks []ConfigObservation `json:"configChecks,omitempty"`
-	Exemptions   *ExemptionBoot      `json:"exemptions,omitempty"`
 }
 type Request struct {
 	Op        string   `json:"op"`
@@ -714,14 +713,10 @@ func (s *Store) Status() (any, error) {
 	marker, _ := os.ReadFile(s.rom("/system/fonts/" + fontCompatMarker))
 	compatReady := visible && compatNeeded && string(marker) == fontCompatSignature
 	compat := map[string]any{"needed": compatNeeded, "preparedThisBoot": compatReady, "requiresZygisk": compatNeeded, "appRenderingVerified": false}
-	return map[string]any{"version": Version, "library": assets, "draft": p, "pending": pending, "active": active, "boot": boot, "visible": visible, "visibilityError": visibilityError, "baseline": base, "fontCompatibility": compat, "appExemptions": s.ExemptionStatus(), "coverageCapabilities": map[string]any{"scripts": scriptList(), "roles": []string{"sans", "serif", "monospace", "casual", "cursive", "decorative", "emoji", "symbols", "icons"}, "fallbackChainLimit": 8, "ruleLimit": 32, "unicodeVersion": "16.0.0", "engineCompatibility": "configuration", "glyphProbe": true, "appFontEvidence": true, "privateFontHook": false}, "capabilities": map[string]any{"variable": true, "static": true, "continuousModern": base.SDK >= 35, "bundledAppFonts": false, "notificationRoleHook": false, "automaticReboot": false, "mountBackend": "ephemeral-bind", "deviceValidation": "runtime-content-hashes"}}, nil
+	return map[string]any{"version": Version, "library": assets, "draft": p, "pending": pending, "active": active, "boot": boot, "visible": visible, "visibilityError": visibilityError, "baseline": base, "fontCompatibility": compat, "coverageCapabilities": map[string]any{"scripts": scriptList(), "roles": []string{"sans", "serif", "monospace", "casual", "cursive", "decorative", "emoji", "symbols", "icons"}, "fallbackChainLimit": 8, "ruleLimit": 32, "unicodeVersion": "16.0.0", "engineCompatibility": "configuration", "glyphProbe": true, "appFontEvidence": true, "privateFontHook": false}, "capabilities": map[string]any{"variable": true, "static": true, "continuousModern": base.SDK >= 35, "bundledAppFonts": false, "notificationRoleHook": false, "automaticReboot": false, "mountBackend": "ephemeral-bind", "deviceValidation": "runtime-content-hashes"}}, nil
 }
 func (s *Store) Handle(r Request) (any, error) {
 	switch r.Op {
-	case "installed_apps":
-		return s.InstalledApps()
-	case "exemption_evidence":
-		return s.ExemptionEvidence(r.Package)
 	case "font_inventory":
 		return s.FontInventory()
 	case "coverage_report":

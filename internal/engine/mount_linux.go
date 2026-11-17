@@ -238,10 +238,6 @@ func (s *Store) Boot() (result any, err error) {
 			}
 			mirrors[dir] = merged
 		}
-		record.Exemptions, e = s.prepareExemptions(*g, configMounts)
-		if e != nil {
-			return nil, e
-		}
 		// Build all mirrors before exposing any of them. Roll back every visible
 		// bind if a later mount fails. No running-app hot replacement is supported.
 		if e = s.startBootAttempt(g.ID, bid); e != nil {

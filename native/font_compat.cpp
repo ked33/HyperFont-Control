@@ -86,8 +86,6 @@ int apply(JNIEnv *env) {
     return result;
 }
 
-#include "app_exemptions.hpp"
-
 class HyperFontCompat final : public zygisk::ModuleBase {
     zygisk::Api *api_{};
     JNIEnv *env_{};
@@ -98,17 +96,7 @@ class HyperFontCompat final : public zygisk::ModuleBase {
     }
 public:
     void onLoad(zygisk::Api *api, JNIEnv *env) override { api_ = api; env_ = env; }
-    void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
-        exemption::Manifest manifest;
-        if ((!args->is_child_zygote || !*args->is_child_zygote) && exemption::load(manifest) && args->app_data_dir) {
-            const char *dataDir=env_->GetStringUTFChars(args->app_data_dir,nullptr);
-            bool match=dataDir && exemption::matches(manifest,args->uid,dataDir);
-            if(dataDir)env_->ReleaseStringUTFChars(args->app_data_dir,dataDir);
-            if(env_->ExceptionCheck())env_->ExceptionClear();
-            if(match && exemption::prepare(env_,api_,manifest,args->uid))return;
-        }
-        specialize();
-    }
+    void preAppSpecialize(zygisk::AppSpecializeArgs *) override { specialize(); }
     void preServerSpecialize(zygisk::ServerSpecializeArgs *) override { specialize(); }
 };
 } // namespace
@@ -118,43 +106,5 @@ REGISTER_ZYGISK_MODULE(HyperFontCompat)
 #ifdef HFC_DIAGNOSTICS
 extern "C" JNIEXPORT jint JNICALL Java_local_hyperfont_FontCompatProbe_apply(JNIEnv *env, jclass) {
     return apply(env);
-}
-
-// Standalone, opt-in probe uses the same descriptor substitution and namespace
-// restoration. It never installs this library into an existing app or zygote.
-namespace {
-jint probeSize;
-jint diagnosticSize(JNIEnv *, jobject, jobject) { return probeSize; }
-}
-extern "C" JNIEXPORT jboolean JNICALL Java_local_hyperfont_ExemptionProbe_install(JNIEnv *env, jclass, jstring stock, jint size) {
-    const char *path=env->GetStringUTFChars(stock,nullptr);
-    if(!path)return JNI_FALSE;
-    exemption::mapFD=open(path,0|02000000);
-    env->ReleaseStringUTFChars(stock,path);
-    long bytes=exemption::mapFD<0?-1:lseek(exemption::mapFD,0,2);
-    if(bytes<8||bytes>(32<<20))return JNI_FALSE;
-    exemption::mapSize=jint(bytes);probeSize=size;
-    jclass descriptor=env->FindClass("java/io/FileDescriptor");
-    exemption::descriptorField=env->GetFieldID(descriptor,"descriptor","I");
-    env->DeleteLocalRef(descriptor);
-    exemption::originalSize=diagnosticSize;
-    JNINativeMethod method{const_cast<char*>("nGetSize"),const_cast<char*>("(Ljava/io/FileDescriptor;)I"),reinterpret_cast<void*>(exemption::replaceSize)};
-    jclass shared=env->FindClass("android/os/SharedMemory");
-    int result=env->RegisterNatives(shared,&method,1);
-    env->DeleteLocalRef(shared);
-    return result==0?JNI_TRUE:JNI_FALSE;
-}
-extern "C" JNIEXPORT jboolean JNICALL Java_local_hyperfont_ExemptionProbe_consumed(JNIEnv *, jclass) {
-    return exemption::consumed?JNI_TRUE:JNI_FALSE;
-}
-extern "C" JNIEXPORT jboolean JNICALL Java_local_hyperfont_ExemptionProbe_restore(JNIEnv *, jclass) {
-    exemption::Manifest manifest;
-    return exemption::load(manifest)&&exemption::restoreFiles(manifest)?JNI_TRUE:JNI_FALSE;
-}
-extern "C" JNIEXPORT jint JNICALL Java_local_hyperfont_ExemptionProbe_step(JNIEnv *, jclass) {
-    return exemption::restoreStep;
-}
-extern "C" JNIEXPORT jstring JNICALL Java_local_hyperfont_ExemptionProbe_fdName(JNIEnv *env, jclass) {
-    return env->NewStringUTF(exemption::lastFDName);
 }
 #endif
